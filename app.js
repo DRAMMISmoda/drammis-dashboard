@@ -208,6 +208,7 @@
       supa.auth.updateUser({ password: fd.get('password') }).then(({ error }) => {
         btn.disabled = false;
         if (error) { msg.hidden = false; msg.textContent = error.message; return; }
+        history.replaceState(null, '', location.pathname); // rimuove type=recovery dall'URL
         checkAndRender();
       });
     });
@@ -342,7 +343,12 @@
   }
 
   /* ---------- AUTH FLOW ---------- */
+  function isRecoveryLink() {
+    return location.hash.includes('type=recovery') || location.search.includes('type=recovery');
+  }
+
   async function checkAndRender() {
+    if (isRecoveryLink()) { renderRecoveryGate(); return; }
     const { data: { session } } = await supa.auth.getSession();
     if (!session) { renderLoginGate(); return; }
     const { data } = await supa.from('admins').select('user_id').eq('user_id', session.user.id).maybeSingle();
