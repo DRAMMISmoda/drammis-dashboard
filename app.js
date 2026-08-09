@@ -124,6 +124,7 @@
           <button class="pill pill--dark" type="submit">Accedi →</button>
         </form>
         ${passkeySupported() ? `<button class="pill pill--ghost" id="passkeyLoginBtn">Sblocca con Face ID →</button>` : ''}
+        <a href="#" id="forgotLink" class="msg" style="text-decoration:underline;display:inline-block;margin-top:.4rem">Password dimenticata?</a>
         <p class="msg" id="loginMsg" ${errorText ? '' : 'hidden'}>${errorText || ''}</p>
       </div>`;
 
@@ -147,6 +148,69 @@
         loginWithPasskey(email, document.getElementById('loginMsg'));
       });
     }
+
+    document.getElementById('forgotLink').addEventListener('click', (e) => {
+      e.preventDefault();
+      renderForgotGate();
+    });
+  }
+
+  function renderForgotGate() {
+    logoutBtn.hidden = true;
+    app.innerHTML = `
+      <div class="login-card">
+        <h1>Recupera password</h1>
+        <p class="msg">Inserisci la tua email: ti mandiamo un link per reimpostare la password.</p>
+        <form id="forgotForm" novalidate>
+          <label>Email<input type="email" name="email" required autocomplete="username"></label>
+          <button class="pill pill--dark" type="submit">Invia link →</button>
+        </form>
+        <a href="#" id="backToLogin" class="msg" style="text-decoration:underline;display:inline-block;margin-top:.4rem">Torna al login</a>
+        <p class="msg" id="forgotMsg" hidden></p>
+      </div>`;
+
+    document.getElementById('backToLogin').addEventListener('click', (e) => { e.preventDefault(); renderLoginGate(); });
+    document.getElementById('forgotForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const btn = e.target.querySelector('button[type="submit"]');
+      const msg = document.getElementById('forgotMsg');
+      btn.disabled = true;
+      supa.auth.resetPasswordForEmail(fd.get('email').trim().toLowerCase(), {
+        redirectTo: window.location.origin + window.location.pathname,
+      }).then(({ error }) => {
+        btn.disabled = false;
+        msg.hidden = false;
+        msg.textContent = error ? error.message : 'Controlla la tua email — ti abbiamo mandato il link per reimpostare la password.';
+      });
+    });
+  }
+
+  function renderRecoveryGate() {
+    logoutBtn.hidden = true;
+    app.innerHTML = `
+      <div class="login-card">
+        <h1>Nuova password</h1>
+        <p class="msg">Scegli una nuova password per il tuo account.</p>
+        <form id="recoveryForm" novalidate>
+          <label>Nuova password<input type="password" name="password" required minlength="6" autocomplete="new-password"></label>
+          <button class="pill pill--dark" type="submit">Salva password →</button>
+        </form>
+        <p class="msg" id="recoveryMsg" hidden></p>
+      </div>`;
+
+    document.getElementById('recoveryForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const btn = e.target.querySelector('button[type="submit"]');
+      const msg = document.getElementById('recoveryMsg');
+      btn.disabled = true;
+      supa.auth.updateUser({ password: fd.get('password') }).then(({ error }) => {
+        btn.disabled = false;
+        if (error) { msg.hidden = false; msg.textContent = error.message; return; }
+        checkAndRender();
+      });
+    });
   }
 
   function renderNotAdmin() {
@@ -287,6 +351,7 @@
   }
 
   supa.auth.onAuthStateChange((event) => {
+    if (event === 'PASSWORD_RECOVERY') { renderRecoveryGate(); return; }
     if (event !== 'INITIAL_SESSION') checkAndRender();
   });
   logoutBtn.addEventListener('click', () => supa.auth.signOut().then(() => checkAndRender()));
