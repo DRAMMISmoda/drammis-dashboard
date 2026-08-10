@@ -103,15 +103,41 @@ serve(async (req) => {
         return new Response(JSON.stringify({ verified: false }), { status: 400, headers: corsHeaders });
       }
 
-      const { credentialID, credentialPublicKey, counter } = verification.registrationInfo;
+      // La forma esatta di registrationInfo varia tra versioni della libreria
+      // (a volte campi piatti in bytes, a volte annidati sotto "credential" e
+      // già come stringa) — gestiamo entrambe invece di assumerne una sola.
+      const info: any = verification.registrationInfo;
+      const rawId = info.credentialID ?? info.credential?.id;
+      const rawPublicKey = info.credentialPublicKey ?? info.credential?.publicKey;
+      const rawCounter = info.counter ?? info.credential?.counter ?? 0;
 
-      await supabase.from("webauthn_credentials").insert({
+      function toBase64UrlAny(v: any): string {
+        if (typeof v === "string") return v;
+        if (v instanceof Uint8Array) return toBase64Url(v);
+        if (v && typeof v.length === "number") return toBase64Url(new Uint8Array(v));
+        return "";
+      }
+
+      const credentialIdStr = toBase64UrlAny(rawId);
+      const publicKeyStr = toBase64UrlAny(rawPublicKey);
+
+      if (!credentialIdStr || !publicKeyStr) {
+        console.error("registrationInfo shape unexpected:", JSON.stringify(info));
+        return new Response(JSON.stringify({ verified: false, error: "unexpected_shape" }), { status: 500, headers: corsHeaders });
+      }
+
+      const { error: insertErr } = await supabase.from("webauthn_credentials").insert({
         user_id: user.id,
-        credential_id: toBase64Url(credentialID),
-        public_key: toBase64Url(credentialPublicKey),
-        counter,
+        credential_id: credentialIdStr,
+        public_key: publicKeyStr,
+        counter: rawCounter,
         device_label: req.headers.get("user-agent")?.slice(0, 120) || null,
       });
+
+      if (insertErr) {
+        console.error("webauthn_credentials insert error:", insertErr);
+        return new Response(JSON.stringify({ verified: false, error: "save_failed" }), { status: 500, headers: corsHeaders });
+      }
 
       return new Response(JSON.stringify({ verified: true }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
