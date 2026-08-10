@@ -363,10 +363,12 @@
     if (event === 'TOKEN_REFRESHED' && session) saveSession(session);
     if (event === 'SIGNED_OUT') saveSession(null);
   });
+  // "Esci" ora blocca soltanto (torna alla schermata del codice) — non fa
+  // il logout vero, così email e password non si vedono più dopo la prima
+  // volta su questo dispositivo. La sessione e il codice restano salvati.
   logoutBtn.addEventListener('click', () => {
     sessionStorage.removeItem(PIN_UNLOCK_KEY);
-    saveSession(null);
-    supa.auth.signOut().then(() => checkAndRender());
+    checkAndRender();
   });
 
   checkAndRender();
