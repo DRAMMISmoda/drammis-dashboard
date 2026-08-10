@@ -10,122 +10,89 @@
   const logoutBtn = document.getElementById('logoutBtn');
   const euro = (n) => '€' + Math.round(n || 0).toLocaleString('it-IT');
 
-  /* ---------- FACE ID / TOUCH ID (WebAuthn) ---------- */
-  function passkeySupported() {
-    return typeof window !== 'undefined' && !!window.PublicKeyCredential && !!navigator.credentials;
-  }
-  function bufToB64url(buf) {
-    const bytes = new Uint8Array(buf);
-    let bin = '';
-    bytes.forEach((b) => (bin += String.fromCharCode(b)));
-    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  }
-  function b64urlToBuf(b64url) {
-    const pad = '='.repeat((4 - (b64url.length % 4)) % 4);
-    const b64 = (b64url + pad).replace(/-/g, '+').replace(/_/g, '/');
-    const bin = atob(b64);
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    return bytes.buffer;
-  }
-  // Preferiamo le funzioni native del browser (WebAuthn Level 3) che convertono
-  // da/verso JSON senza bisogno di codice manuale — con fallback per browser
-  // meno recenti che non le hanno ancora.
-  function preparePublicKeyCreationOptions(options) {
-    if (window.PublicKeyCredential && PublicKeyCredential.parseCreationOptionsFromJSON) {
-      return PublicKeyCredential.parseCreationOptionsFromJSON(options);
-    }
-    return Object.assign({}, options, {
-      challenge: b64urlToBuf(options.challenge),
-      user: Object.assign({}, options.user, { id: b64urlToBuf(options.user.id) }),
-      excludeCredentials: (options.excludeCredentials || []).map((c) => Object.assign({}, c, { id: b64urlToBuf(c.id) })),
-    });
-  }
-  function preparePublicKeyRequestOptions(options) {
-    if (window.PublicKeyCredential && PublicKeyCredential.parseRequestOptionsFromJSON) {
-      return PublicKeyCredential.parseRequestOptionsFromJSON(options);
-    }
-    return Object.assign({}, options, {
-      challenge: b64urlToBuf(options.challenge),
-      allowCredentials: (options.allowCredentials || []).map((c) => Object.assign({}, c, { id: b64urlToBuf(c.id) })),
-    });
-  }
-  function credentialCreateToJSON(cred) {
-    if (cred.toJSON) return cred.toJSON();
-    return {
-      id: cred.id,
-      rawId: bufToB64url(cred.rawId),
-      type: cred.type,
-      response: {
-        clientDataJSON: bufToB64url(cred.response.clientDataJSON),
-        attestationObject: bufToB64url(cred.response.attestationObject),
-      },
-      clientExtensionResults: cred.getClientExtensionResults ? cred.getClientExtensionResults() : {},
-    };
-  }
-  function credentialGetToJSON(cred) {
-    if (cred.toJSON) return cred.toJSON();
-    return {
-      id: cred.id,
-      rawId: bufToB64url(cred.rawId),
-      type: cred.type,
-      response: {
-        clientDataJSON: bufToB64url(cred.response.clientDataJSON),
-        authenticatorData: bufToB64url(cred.response.authenticatorData),
-        signature: bufToB64url(cred.response.signature),
-        userHandle: cred.response.userHandle ? bufToB64url(cred.response.userHandle) : undefined,
-      },
-      clientExtensionResults: cred.getClientExtensionResults ? cred.getClientExtensionResults() : {},
-    };
+  /* ---------- CODICE DI SICUREZZA (PIN a 6 cifre) ----------
+     La vera sicurezza resta la sessione Supabase (email+password);
+     questo PIN è solo un lucchetto rapido sopra, salvato SOLO su
+     questo dispositivo (non su Supabase) — niente Face ID, niente
+     dipendenze dal browser/biometria che ci hanno dato problemi. */
+  const PIN_HASH_KEY = 'drammis_pin_hash';
+  const PIN_UNLOCK_KEY = 'drammis_pin_unlocked'; // sessionStorage: si azzera quando chiudi la scheda/il browser
+
+  async function hashPin(pin) {
+    const enc = new TextEncoder().encode('drammis-dashboard-pin::' + pin);
+    const buf = await crypto.subtle.digest('SHA-256', enc);
+    return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
   }
 
-  async function setupPasskey(msgEl) {
-    const show = (t) => { if (msgEl) { msgEl.hidden = false; msgEl.textContent = t; } };
-    try {
-      show('Preparazione…');
-      const optRes = await supa.functions.invoke('webauthn-register', { body: { action: 'options' } });
-      if (optRes.error || !optRes.data) throw optRes.error || new Error('no options');
-      const publicKey = preparePublicKeyCreationOptions(optRes.data);
-      const cred = await navigator.credentials.create({ publicKey });
-      if (!cred) throw new Error('cancelled');
-      const verifyRes = await supa.functions.invoke('webauthn-register', {
-        body: { action: 'verify', credential: credentialCreateToJSON(cred) },
-      });
-      if (verifyRes.error || !verifyRes.data || !verifyRes.data.verified) throw new Error('verifica fallita: ' + JSON.stringify(verifyRes.error || verifyRes.data));
-      show('Face ID/Touch ID attivato — la prossima volta potrai accedere senza password.');
-    } catch (e) {
-      console.error('setupPasskey error:', e);
-      show('Errore: ' + (e && (e.name || e.message) ? `${e.name || ''} ${e.message || ''}`.trim() : String(e)));
-    }
+  function pinInputHtml(id) {
+    return `<input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code" id="${id}" style="letter-spacing:.5em;text-align:center;font-size:1.4rem">`;
   }
 
-  async function loginWithPasskey(email, msgEl) {
-    const show = (t) => { if (msgEl) { msgEl.hidden = false; msgEl.textContent = t; } };
-    if (!email) { show('Scrivi prima la tua email qui sopra.'); return; }
-    try {
-      show('Verifica in corso…');
-      const optRes = await supa.functions.invoke('webauthn-auth', { body: { action: 'options', email } });
-      if (optRes.error || !optRes.data || optRes.data.error) { show('Nessun accesso rapido configurato per questa email — usa la password.'); return; }
-      const publicKey = preparePublicKeyRequestOptions(optRes.data);
-      const cred = await navigator.credentials.get({ publicKey });
-      if (!cred) throw new Error('cancelled');
-      const verifyRes = await supa.functions.invoke('webauthn-auth', {
-        body: { action: 'verify', email, credential: credentialGetToJSON(cred) },
-      });
-      if (verifyRes.error || !verifyRes.data || !verifyRes.data.verified || !verifyRes.data.token_hash) {
-        show('Verifica non riuscita — usa la password.');
-        return;
+  function renderPinSetup() {
+    logoutBtn.hidden = false;
+    app.innerHTML = `
+      <div class="login-card">
+        <h1>Crea un codice</h1>
+        <p class="msg">Scegli un codice a 6 cifre: da ora in poi ti basterà quello per aprire la dashboard su questo dispositivo, senza dover reinserire email e password ogni volta.</p>
+        <form id="pinSetupForm" novalidate>
+          <label>Codice (6 cifre)${pinInputHtml('pinNew')}</label>
+          <label>Ripeti il codice${pinInputHtml('pinNewConfirm')}</label>
+          <button class="pill pill--dark" type="submit">Salva codice →</button>
+        </form>
+        <p class="msg" id="pinSetupMsg" hidden></p>
+      </div>`;
+
+    document.getElementById('pinSetupForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const msg = document.getElementById('pinSetupMsg');
+      const a = document.getElementById('pinNew').value.trim();
+      const b = document.getElementById('pinNewConfirm').value.trim();
+      if (!/^\d{6}$/.test(a)) { msg.hidden = false; msg.textContent = 'Il codice deve essere di 6 cifre.'; return; }
+      if (a !== b) { msg.hidden = false; msg.textContent = 'I due codici non coincidono.'; return; }
+      localStorage.setItem(PIN_HASH_KEY, await hashPin(a));
+      sessionStorage.setItem(PIN_UNLOCK_KEY, '1');
+      renderDashboard('week');
+    });
+  }
+
+  function renderPinLock() {
+    logoutBtn.hidden = false;
+    app.innerHTML = `
+      <div class="login-card">
+        <h1>Inserisci il codice</h1>
+        <form id="pinLockForm" novalidate>
+          <label>Codice (6 cifre)${pinInputHtml('pinEnter')}</label>
+          <button class="pill pill--dark" type="submit">Sblocca →</button>
+        </form>
+        <a href="#" id="forgotPinLink" class="msg" style="text-decoration:underline;display:inline-block;margin-top:.4rem">Codice dimenticato?</a>
+        <p class="msg" id="pinLockMsg" hidden></p>
+      </div>`;
+
+    document.getElementById('pinEnter').focus();
+
+    document.getElementById('pinLockForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const msg = document.getElementById('pinLockMsg');
+      const entered = document.getElementById('pinEnter').value.trim();
+      const storedHash = localStorage.getItem(PIN_HASH_KEY);
+      if (await hashPin(entered) === storedHash) {
+        sessionStorage.setItem(PIN_UNLOCK_KEY, '1');
+        renderDashboard('week');
+      } else {
+        msg.hidden = false;
+        msg.textContent = 'Codice sbagliato, riprova.';
       }
-      const { error: otpErr } = await supa.auth.verifyOtp({ email, token_hash: verifyRes.data.token_hash, type: 'magiclink' });
-      if (otpErr) { show('Non sono riuscito ad aprire la sessione — usa la password.'); return; }
-      // onAuthStateChange ri-renderizza da solo
-    } catch (e) {
-      console.error('loginWithPasskey error:', e);
-      show('Errore: ' + (e && (e.name || e.message) ? `${e.name || ''} ${e.message || ''}`.trim() : String(e)));
-    }
+    });
+
+    document.getElementById('forgotPinLink').addEventListener('click', (e) => {
+      e.preventDefault();
+      localStorage.removeItem(PIN_HASH_KEY);
+      sessionStorage.removeItem(PIN_UNLOCK_KEY);
+      supa.auth.signOut().then(() => checkAndRender());
+    });
   }
 
-  /* ---------- LOGIN GATE ---------- */
+  /* ---------- LOGIN GATE (email + password) ---------- */
   function renderLoginGate(errorText) {
     logoutBtn.hidden = true;
     app.innerHTML = `
@@ -136,7 +103,6 @@
           <label>Password<input type="password" name="password" required autocomplete="current-password"></label>
           <button class="pill pill--dark" type="submit">Accedi →</button>
         </form>
-        ${passkeySupported() ? `<button class="pill pill--ghost" id="passkeyLoginBtn">Sblocca con Face ID →</button>` : ''}
         <a href="#" id="forgotLink" class="msg" style="text-decoration:underline;display:inline-block;margin-top:.4rem">Password dimenticata?</a>
         <p class="msg" id="loginMsg" ${errorText ? '' : 'hidden'}>${errorText || ''}</p>
       </div>`;
@@ -153,14 +119,6 @@
           if (error) { msg.hidden = false; msg.textContent = error.message === 'Invalid login credentials' ? 'Email o password non corrette.' : error.message; }
         });
     });
-
-    const passkeyBtn = document.getElementById('passkeyLoginBtn');
-    if (passkeyBtn) {
-      passkeyBtn.addEventListener('click', () => {
-        const email = document.querySelector('#loginForm input[name="email"]').value.trim();
-        loginWithPasskey(email, document.getElementById('loginMsg'));
-      });
-    }
 
     document.getElementById('forgotLink').addEventListener('click', (e) => {
       e.preventDefault();
@@ -251,9 +209,8 @@
         ${Object.entries(PERIODS).map(([key, p]) =>
           `<button class="pill ${key === period ? 'pill--dark' : 'pill--ghost'}" data-period="${key}">${p.label}</button>`
         ).join('')}
-        ${passkeySupported() ? `<button class="pill pill--ghost" id="passkeySetupBtn">Attiva Face ID →</button>` : ''}
+        <button class="pill pill--ghost" id="changePinBtn">Cambia codice →</button>
       </div>
-      <p class="msg" id="passkeyMsg" hidden></p>
       <div class="admin__tiles" id="tiles"><p class="msg">Carico i dati…</p></div>
       <div class="admin__chart-wrap"><canvas id="chart" height="90"></canvas></div>
       <div class="admin__tables" id="tables"></div>`;
@@ -261,8 +218,7 @@
     app.querySelectorAll('[data-period]').forEach((btn) => {
       btn.addEventListener('click', () => renderDashboard(btn.dataset.period));
     });
-    const setupBtn = document.getElementById('passkeySetupBtn');
-    if (setupBtn) setupBtn.addEventListener('click', () => setupPasskey(document.getElementById('passkeyMsg')));
+    document.getElementById('changePinBtn').addEventListener('click', () => renderPinSetup());
 
     Promise.all([
       supa.from('orders').select('id, email, total, created_at, status, order_items(name, qty)').gte('created_at', cutoff).order('created_at', { ascending: false }),
@@ -366,6 +322,10 @@
     if (!session) { renderLoginGate(); return; }
     const { data } = await supa.from('admins').select('user_id').eq('user_id', session.user.id).maybeSingle();
     if (!data) { renderNotAdmin(); return; }
+
+    const pinHash = localStorage.getItem(PIN_HASH_KEY);
+    if (!pinHash) { renderPinSetup(); return; }
+    if (sessionStorage.getItem(PIN_UNLOCK_KEY) !== '1') { renderPinLock(); return; }
     renderDashboard('week');
   }
 
@@ -373,7 +333,10 @@
     if (event === 'PASSWORD_RECOVERY') { renderRecoveryGate(); return; }
     if (event !== 'INITIAL_SESSION') checkAndRender();
   });
-  logoutBtn.addEventListener('click', () => supa.auth.signOut().then(() => checkAndRender()));
+  logoutBtn.addEventListener('click', () => {
+    sessionStorage.removeItem(PIN_UNLOCK_KEY);
+    supa.auth.signOut().then(() => checkAndRender());
+  });
 
   checkAndRender();
 })();
