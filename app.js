@@ -114,8 +114,9 @@
       const msg = document.getElementById('loginMsg');
       btn.disabled = true;
       supa.auth.signInWithPassword({ email: fd.get('email').trim().toLowerCase(), password: fd.get('password') })
-        .then(({ error }) => {
+        .then(({ data, error }) => {
           btn.disabled = false;
+          console.log('[debug] signInWithPassword — data:', data, 'error:', error, 'storage keys right after login:', Object.keys(localStorage));
           if (error) { msg.hidden = false; msg.textContent = error.message === 'Invalid login credentials' ? 'Email o password non corrette.' : error.message; }
         });
     });
