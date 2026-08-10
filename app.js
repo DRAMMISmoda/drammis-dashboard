@@ -28,7 +28,13 @@
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
     return bytes.buffer;
   }
+  // Preferiamo le funzioni native del browser (WebAuthn Level 3) che convertono
+  // da/verso JSON senza bisogno di codice manuale — con fallback per browser
+  // meno recenti che non le hanno ancora.
   function preparePublicKeyCreationOptions(options) {
+    if (window.PublicKeyCredential && PublicKeyCredential.parseCreationOptionsFromJSON) {
+      return PublicKeyCredential.parseCreationOptionsFromJSON(options);
+    }
     return Object.assign({}, options, {
       challenge: b64urlToBuf(options.challenge),
       user: Object.assign({}, options.user, { id: b64urlToBuf(options.user.id) }),
@@ -36,12 +42,16 @@
     });
   }
   function preparePublicKeyRequestOptions(options) {
+    if (window.PublicKeyCredential && PublicKeyCredential.parseRequestOptionsFromJSON) {
+      return PublicKeyCredential.parseRequestOptionsFromJSON(options);
+    }
     return Object.assign({}, options, {
       challenge: b64urlToBuf(options.challenge),
       allowCredentials: (options.allowCredentials || []).map((c) => Object.assign({}, c, { id: b64urlToBuf(c.id) })),
     });
   }
   function credentialCreateToJSON(cred) {
+    if (cred.toJSON) return cred.toJSON();
     return {
       id: cred.id,
       rawId: bufToB64url(cred.rawId),
@@ -54,6 +64,7 @@
     };
   }
   function credentialGetToJSON(cred) {
+    if (cred.toJSON) return cred.toJSON();
     return {
       id: cred.id,
       rawId: bufToB64url(cred.rawId),
