@@ -331,14 +331,17 @@
     renderDashboard('week');
   }
 
+  // IMPORTANTE: non chiamiamo checkAndRender() subito all'avvio — al primo
+  // caricamento della pagina la sessione salvata potrebbe non essere ancora
+  // stata letta dallo storage, e la vedremmo come "non loggato" per errore.
+  // Aspettiamo invece l'evento INITIAL_SESSION, che Supabase manda solo dopo
+  // aver controllato per davvero se c'è una sessione salvata.
   supa.auth.onAuthStateChange((event) => {
     if (event === 'PASSWORD_RECOVERY') { renderRecoveryGate(); return; }
-    if (event !== 'INITIAL_SESSION') checkAndRender();
+    checkAndRender();
   });
   logoutBtn.addEventListener('click', () => {
     sessionStorage.removeItem(PIN_UNLOCK_KEY);
     supa.auth.signOut().then(() => checkAndRender());
   });
-
-  checkAndRender();
 })();
