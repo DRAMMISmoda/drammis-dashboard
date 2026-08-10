@@ -50,7 +50,7 @@ serve(async (req) => {
       const options = await generateRegistrationOptions({
         rpName: "DRAMMIS",
         rpID: RP_ID,
-        userID: new TextEncoder().encode(user.id),
+        userID: user.id,
         userName: user.email ?? "admin",
         attestationType: "none",
         authenticatorSelection: {
