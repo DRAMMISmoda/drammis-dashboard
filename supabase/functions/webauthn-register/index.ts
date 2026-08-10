@@ -59,6 +59,10 @@ serve(async (req) => {
         },
       });
 
+      // La libreria a volte non restituisce user.id come base64url valido —
+      // lo garantiamo noi stessi, codificando l'id utente da zero.
+      options.user.id = toBase64Url(new TextEncoder().encode(user.id));
+
       await supabase.from("webauthn_challenges").insert({
         user_id: user.id,
         email: user.email,
