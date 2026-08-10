@@ -59,17 +59,24 @@ serve(async (req) => {
         },
       });
 
-      // La libreria a volte non restituisce user.id come base64url valido —
-      // lo garantiamo noi stessi, codificando l'id utente da zero.
-      options.user.id = toBase64Url(new TextEncoder().encode(user.id));
+      // Costruiamo un oggetto nuovo e pulito per la risposta invece di
+      // modificare quello della libreria (potrebbe avere getter/campi
+      // interni che ignorano un'assegnazione diretta).
+      const safeOptions = {
+        ...options,
+        user: {
+          ...options.user,
+          id: toBase64Url(new TextEncoder().encode(user.id)),
+        },
+      };
 
       await supabase.from("webauthn_challenges").insert({
         user_id: user.id,
         email: user.email,
-        challenge: options.challenge,
+        challenge: safeOptions.challenge,
       });
 
-      return new Response(JSON.stringify(options), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(JSON.stringify(safeOptions), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     if (body.action === "verify") {
