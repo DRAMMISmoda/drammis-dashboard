@@ -80,10 +80,11 @@
       const verifyRes = await supa.functions.invoke('webauthn-register', {
         body: { action: 'verify', credential: credentialCreateToJSON(cred) },
       });
-      if (verifyRes.error || !verifyRes.data || !verifyRes.data.verified) throw new Error('verifica fallita');
+      if (verifyRes.error || !verifyRes.data || !verifyRes.data.verified) throw new Error('verifica fallita: ' + JSON.stringify(verifyRes.error || verifyRes.data));
       show('Face ID/Touch ID attivato — la prossima volta potrai accedere senza password.');
     } catch (e) {
-      show('Non è stato possibile attivare Face ID su questo dispositivo. Riprova o continua con la password.');
+      console.error('setupPasskey error:', e);
+      show('Errore: ' + (e && (e.name || e.message) ? `${e.name || ''} ${e.message || ''}`.trim() : String(e)));
     }
   }
 
@@ -108,7 +109,8 @@
       if (otpErr) { show('Non sono riuscito ad aprire la sessione — usa la password.'); return; }
       // onAuthStateChange ri-renderizza da solo
     } catch (e) {
-      show('Accesso con Face ID non riuscito — usa la password.');
+      console.error('loginWithPasskey error:', e);
+      show('Errore: ' + (e && (e.name || e.message) ? `${e.name || ''} ${e.message || ''}`.trim() : String(e)));
     }
   }
 
