@@ -318,7 +318,8 @@
 
   async function checkAndRender() {
     if (isRecoveryLink()) { renderRecoveryGate(); return; }
-    const { data: { session } } = await supa.auth.getSession();
+    const { data: { session }, error: sessErr } = await supa.auth.getSession();
+    console.log('[debug] checkAndRender — session:', session, 'error:', sessErr, 'storage keys:', Object.keys(localStorage));
     if (!session) { renderLoginGate(); return; }
     const { data } = await supa.from('admins').select('user_id').eq('user_id', session.user.id).maybeSingle();
     if (!data) { renderNotAdmin(); return; }
