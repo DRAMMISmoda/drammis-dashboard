@@ -18,6 +18,30 @@
   const PIN_HASH_KEY = 'drammis_pin_hash';
   const PIN_UNLOCK_KEY = 'drammis_pin_unlocked'; // sessionStorage: si azzera quando chiudi la scheda/il browser
 
+  /* ---------- SALVATAGGIO MANUALE DELLA SESSIONE ----------
+     Il meccanismo automatico di Supabase (che dovrebbe salvare la sessione
+     da solo) non sta funzionando in modo affidabile — nessuna richiesta di
+     rete né token salvato dopo un refresh. La salviamo noi stessi con la
+     stessa localStorage che già sappiamo funzionare (il PIN ci resta). */
+  const SESSION_KEY = 'drammis_session';
+  function saveSession(session) {
+    if (session) localStorage.setItem(SESSION_KEY, JSON.stringify({ access_token: session.access_token, refresh_token: session.refresh_token }));
+    else localStorage.removeItem(SESSION_KEY);
+  }
+  async function restoreSession() {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    try {
+      const { access_token, refresh_token } = JSON.parse(raw);
+      const { data, error } = await supa.auth.setSession({ access_token, refresh_token });
+      if (error) { localStorage.removeItem(SESSION_KEY); return null; }
+      return data.session;
+    } catch (e) {
+      localStorage.removeItem(SESSION_KEY);
+      return null;
+    }
+  }
+
   async function hashPin(pin) {
     const enc = new TextEncoder().encode('drammis-dashboard-pin::' + pin);
     const buf = await crypto.subtle.digest('SHA-256', enc);
@@ -116,8 +140,9 @@
       supa.auth.signInWithPassword({ email: fd.get('email').trim().toLowerCase(), password: fd.get('password') })
         .then(({ data, error }) => {
           btn.disabled = false;
-          console.log('[debug] signInWithPassword — data:', data, 'error:', error, 'storage keys right after login:', Object.keys(localStorage));
-          if (error) { msg.hidden = false; msg.textContent = error.message === 'Invalid login credentials' ? 'Email o password non corrette.' : error.message; }
+          if (error) { msg.hidden = false; msg.textContent = error.message === 'Invalid login credentials' ? 'Email o password non corrette.' : error.message; return; }
+          saveSession(data.session);
+          checkAndRender();
         });
     });
 
@@ -177,9 +202,11 @@
       const btn = e.target.querySelector('button[type="submit"]');
       const msg = document.getElementById('recoveryMsg');
       btn.disabled = true;
-      supa.auth.updateUser({ password: fd.get('password') }).then(({ error }) => {
+      supa.auth.updateUser({ password: fd.get('password') }).then(async ({ error }) => {
         btn.disabled = false;
         if (error) { msg.hidden = false; msg.textContent = error.message; return; }
+        const { data: { session } } = await supa.auth.getSession();
+        saveSession(session);
         history.replaceState(null, '', location.pathname); // rimuove type=recovery dall'URL
         checkAndRender();
       });
@@ -319,8 +346,8 @@
 
   async function checkAndRender() {
     if (isRecoveryLink()) { renderRecoveryGate(); return; }
-    const { data: { session }, error: sessErr } = await supa.auth.getSession();
-    console.log('[debug] checkAndRender — session:', session, 'error:', sessErr, 'storage keys:', Object.keys(localStorage));
+    let { data: { session } } = await supa.auth.getSession();
+    if (!session) session = await restoreSession();
     if (!session) { renderLoginGate(); return; }
     const { data } = await supa.from('admins').select('user_id').eq('user_id', session.user.id).maybeSingle();
     if (!data) { renderNotAdmin(); return; }
@@ -331,17 +358,16 @@
     renderDashboard('week');
   }
 
-  // IMPORTANTE: non chiamiamo checkAndRender() subito all'avvio — al primo
-  // caricamento della pagina la sessione salvata potrebbe non essere ancora
-  // stata letta dallo storage, e la vedremmo come "non loggato" per errore.
-  // Aspettiamo invece l'evento INITIAL_SESSION, che Supabase manda solo dopo
-  // aver controllato per davvero se c'è una sessione salvata.
-  supa.auth.onAuthStateChange((event) => {
+  supa.auth.onAuthStateChange((event, session) => {
     if (event === 'PASSWORD_RECOVERY') { renderRecoveryGate(); return; }
-    checkAndRender();
+    if (event === 'TOKEN_REFRESHED' && session) saveSession(session);
+    if (event === 'SIGNED_OUT') saveSession(null);
   });
   logoutBtn.addEventListener('click', () => {
     sessionStorage.removeItem(PIN_UNLOCK_KEY);
+    saveSession(null);
     supa.auth.signOut().then(() => checkAndRender());
   });
+
+  checkAndRender();
 })();
