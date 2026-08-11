@@ -232,12 +232,13 @@
     year: { label: 'Anno', days: 365 },
   };
   const SECTIONS = {
+    riepilogo: 'Riepilogo',
     vendite: 'Vendite',
     resi: 'Resi',
     traffico: 'Traffico',
   };
   let chart = null;
-  let currentSection = 'vendite';
+  let currentSection = 'riepilogo';
   let currentPeriod = 'week';
   const menuBtn = document.getElementById('menuBtn');
   const menuOverlay = document.getElementById('menuOverlay');
@@ -278,7 +279,60 @@
 
     if (currentSection === 'resi') renderReturnsSection();
     else if (currentSection === 'traffico') renderTrafficSection();
+    else if (currentSection === 'riepilogo') renderRiepilogoSection();
     else renderSalesSection();
+  }
+
+  /* ----- Riepilogo (di oggi, tutto in un colpo d'occhio) ----- */
+  function startOfTodayISO() {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.toISOString();
+  }
+
+  function renderRiepilogoSection() {
+    const cutoff = startOfTodayISO();
+    app.innerHTML = `
+      <div class="section-summary" id="riepilogoSummary"><p class="msg">Carico i dati…</p></div>
+      <div class="section-detail">
+        <span class="section-detail__hint">Dettaglio di oggi</span>
+        <div class="admin__tables" id="riepilogoTables"></div>
+      </div>`;
+
+    Promise.all([
+      supa.from('orders').select('id, email, total, created_at').gte('created_at', cutoff).order('created_at', { ascending: false }),
+      supa.from('returns').select('id, status, created_at').gte('created_at', cutoff),
+      supa.from('events').select('type').gte('created_at', cutoff),
+    ]).then(([ordersRes, returnsRes, eventsRes]) => {
+      if (ordersRes.error) throw ordersRes.error;
+      if (returnsRes.error) throw returnsRes.error;
+      if (eventsRes.error) throw eventsRes.error;
+      const orders = ordersRes.data || [];
+      const returns = returnsRes.data || [];
+      const events = eventsRes.data || [];
+      const revenue = orders.reduce((s, o) => s + (o.total || 0), 0);
+      const visits = events.filter((e) => e.type === 'page_view').length;
+
+      document.getElementById('riepilogoSummary').innerHTML = `
+        <div class="section-summary__stat"><span class="section-summary__label">Fatturato oggi</span><span class="section-summary__value">${euro(revenue)}</span></div>
+        <div class="section-summary__stat"><span class="section-summary__label">Ordini oggi</span><span class="section-summary__value">${orders.length}</span></div>
+        <div class="section-summary__stat"><span class="section-summary__label">Resi oggi</span><span class="section-summary__value">${returns.length}</span></div>
+        <div class="section-summary__stat"><span class="section-summary__label">Visite oggi</span><span class="section-summary__value">${visits}</span></div>`;
+
+      const ordersList = orders.map((o) => `
+        <tr><td>${new Date(o.created_at).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}</td><td>${o.email || '—'}</td><td>${euro(o.total)}</td></tr>
+      `).join('') || '<tr><td colspan="3">Nessun ordine oggi</td></tr>';
+      const returnsList = returns.map((r) => `
+        <tr><td>${new Date(r.created_at).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}</td><td>${r.status || '—'}</td></tr>
+      `).join('') || '<tr><td colspan="2">Nessun reso oggi</td></tr>';
+
+      document.getElementById('riepilogoTables').innerHTML = `
+        <div class="admin__table-card"><h3>Ordini di oggi</h3><table class="admin__table"><thead><tr><th>Ora</th><th>Cliente</th><th>Totale</th></tr></thead><tbody>${ordersList}</tbody></table></div>
+        <div class="admin__table-card"><h3>Resi di oggi</h3><table class="admin__table"><thead><tr><th>Ora</th><th>Stato</th></tr></thead><tbody>${returnsList}</tbody></table></div>`;
+    }).catch(() => {
+      const s = document.getElementById('riepilogoSummary');
+      if (s) s.innerHTML = `<p class="msg">Non riesco a caricare i dati. Riprova tra poco.</p>`;
+    });
   }
 
   /* ----- Vendite ----- */
