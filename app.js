@@ -254,7 +254,7 @@
     btn.addEventListener('click', () => {
       currentSection = btn.dataset.section;
       closeMenu();
-      renderDashboard();
+      checkAndRender(); // sempre dal controllo vero (sessione + PIN), mai direttamente renderDashboard()
     });
   });
 

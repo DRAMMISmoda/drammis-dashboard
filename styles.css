@@ -20,11 +20,13 @@ body{
   font-size:1.1rem;line-height:1;padding:.5rem .7rem;cursor:pointer;
 }
 .menu-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:20}
+.menu-overlay[hidden]{display:none}
 .menu-drawer{
   position:fixed;top:0;left:0;bottom:0;width:min(78vw,300px);background:#151310;
   border-right:1px solid var(--line);z-index:21;display:flex;flex-direction:column;
   padding:clamp(70px,12vh,90px) 1rem 1rem;gap:.4rem;
 }
+.menu-drawer[hidden]{display:none}
 .menu-drawer__close{
   position:absolute;top:1rem;right:1rem;background:none;border:1px solid var(--line);border-radius:10px;
   color:var(--fg);font-size:1rem;line-height:1;width:2.2rem;height:2.2rem;cursor:pointer;
