@@ -235,7 +235,6 @@
     vendite: 'Vendite',
     resi: 'Resi',
     traffico: 'Traffico',
-    impostazioni: 'Impostazioni',
   };
   let chart = null;
   let currentSection = 'vendite';
@@ -277,10 +276,9 @@
       btn.classList.toggle('is-active', btn.dataset.section === currentSection);
     });
 
-    if (currentSection === 'vendite') renderSalesSection();
-    else if (currentSection === 'resi') renderReturnsSection();
+    if (currentSection === 'resi') renderReturnsSection();
     else if (currentSection === 'traffico') renderTrafficSection();
-    else renderSettingsSection();
+    else renderSalesSection();
   }
 
   /* ----- Vendite ----- */
@@ -416,16 +414,6 @@
     });
   }
 
-  /* ----- Impostazioni ----- */
-  function renderSettingsSection() {
-    app.innerHTML = `
-      <div class="login-card" style="margin:0">
-        <h1>Impostazioni</h1>
-        <p class="msg">Il codice a 6 cifre sblocca la dashboard solo su questo dispositivo.</p>
-        <button class="pill pill--ghost" id="changePinBtn">Cambia codice →</button>
-      </div>`;
-    document.getElementById('changePinBtn').addEventListener('click', () => renderPinSetup());
-  }
 
   /* ---------- AUTH FLOW ---------- */
   function isRecoveryLink() {
