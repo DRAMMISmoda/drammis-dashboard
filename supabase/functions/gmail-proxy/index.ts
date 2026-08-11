@@ -103,6 +103,29 @@ async function gmailFetch(accessToken: string, path: string, init: RequestInit =
   return res.json();
 }
 
+const CATEGORY_SYSTEM_PROMPT = `Analizza queste email arrivate nella casella di DRAMMIS, un piccolo brand italiano di cinture in pelle. Per ciascuna decidi se è:
+- "fornitori": email da chi vende materiali, produce, spedisce o fornisce servizi al brand (es. conceria, produttore fibbie, corriere, tipografia, commercialista, agenzia, piattaforma software/hosting, packaging)
+- "importanti": qualsiasi altra email genuina che merita attenzione (nuovo cliente che scrive prima di un acquisto, richiesta di collaborazione, problema, banca, questioni legali, stampa/influencer, ecc)
+Rispondi SOLO con un oggetto JSON valido, senza testo prima o dopo: le chiavi sono gli id delle email, i valori sono "fornitori" oppure "importanti".`;
+
+async function classifyRemaining(items: { id: string; from: string; subject: string; snippet: string }[]): Promise<Record<string, string>> {
+  if (!items.length) return {};
+  try {
+    const response = await anthropic.messages.create({
+      model: "claude-haiku-4-5",
+      max_tokens: 1024,
+      system: CATEGORY_SYSTEM_PROMPT,
+      messages: [{ role: "user", content: JSON.stringify(items.map((i) => ({ id: i.id, from: i.from, subject: i.subject, snippet: i.snippet }))) }],
+    });
+    const textBlock = response.content.find((b: any) => b.type === "text") as any;
+    const parsed = JSON.parse((textBlock?.text || "{}").trim());
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (e) {
+    console.error("classifyRemaining failed", e);
+    return {};
+  }
+}
+
 async function listEmails(accessToken: string) {
   // esclude social/pubblicità/notifiche automatiche usando la classificazione che Gmail fa già da solo,
   // così restano solo email vere (persone che scrivono davvero) da smistare in clienti/fornitori/importanti
@@ -122,11 +145,11 @@ async function listEmails(accessToken: string) {
   const supplierEmails = new Set((suppliers || []).map((s: any) => s.email.toLowerCase()));
   const customerEmails = new Set((orders || []).map((o: any) => (o.email || "").toLowerCase()));
 
-  return details.map((d: any) => {
+  const parsed = details.map((d: any) => {
     const from = headerVal(d.payload.headers, "From");
     const match = from.match(/<([^>]+)>/);
     const fromEmail = (match ? match[1] : from).toLowerCase().trim();
-    let category = "importanti";
+    let category: string | null = null;
     if (customerEmails.has(fromEmail)) category = "clienti";
     else if (supplierEmails.has(fromEmail)) category = "fornitori";
     return {
@@ -141,6 +164,16 @@ async function listEmails(accessToken: string) {
       category,
     };
   });
+
+  // per le email che non corrispondono né a un cliente né a un fornitore già noto,
+  // chiede all'AI di leggerne il contenuto e decidere fornitori/importanti
+  const undetermined = parsed.filter((e) => !e.category);
+  const aiCategories = await classifyRemaining(undetermined.map((e) => ({ id: e.id, from: e.from, subject: e.subject, snippet: e.snippet })));
+
+  return parsed.map((e) => ({
+    ...e,
+    category: e.category || (aiCategories[e.id] === "fornitori" ? "fornitori" : "importanti"),
+  }));
 }
 
 async function getEmail(accessToken: string, id: string) {
