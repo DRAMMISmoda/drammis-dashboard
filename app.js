@@ -37,12 +37,23 @@
   let gmailReturnStatus = null;
 
   async function gmailCall(action, extra) {
-    const { data: { session } } = await supa.auth.getSession();
-    const res = await fetch(GMAIL_PROXY_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-      body: JSON.stringify({ action, ...(extra || {}) }),
-    });
+    let { data: { session } } = await supa.auth.getSession();
+    if (!session) session = await restoreSession();
+    if (!session) throw new Error('Sessione scaduta, ricarica la pagina.');
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+    let res;
+    try {
+      res = await fetch(GMAIL_PROXY_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ action, ...(extra || {}) }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
     return res.json();
   }
 
