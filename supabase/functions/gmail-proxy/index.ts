@@ -118,7 +118,9 @@ async function classifyRemaining(items: { id: string; from: string; subject: str
       messages: [{ role: "user", content: JSON.stringify(items.map((i) => ({ id: i.id, from: i.from, subject: i.subject, snippet: i.snippet }))) }],
     });
     const textBlock = response.content.find((b: any) => b.type === "text") as any;
-    const parsed = JSON.parse((textBlock?.text || "{}").trim());
+    const raw = (textBlock?.text || "{}").trim();
+    const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+    const parsed = JSON.parse(cleaned);
     return parsed && typeof parsed === "object" ? parsed : {};
   } catch (e) {
     console.error("classifyRemaining failed", e);
