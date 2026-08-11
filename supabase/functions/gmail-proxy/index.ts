@@ -123,12 +123,13 @@ async function saveContact(email: string, category: string) {
 }
 
 const CATEGORY_SYSTEM_PROMPT = `Analizza queste email/conversazioni arrivate nella casella di DRAMMIS, un piccolo brand italiano di cinture in pelle. Per ciascuna scegli UNA categoria tra:
-- "fornitori_cinte": chi produce/fornisce le cinture stesse (pelle, conceria, taglio, cucitura)
-- "fornitori_fibbie": chi produce/fornisce fibbie e componenti metallici
-- "fornitori_packaging": chi fornisce scatole, imballaggi, buste
-- "fornitori_cartellini": chi fornisce cartellini, etichette, stampe
-- "fornitori_generali": altri fornitori/servizi al brand non compresi sopra (corriere, commercialista, agenzia, hosting/software)
-- "importanti": qualsiasi altra email genuina che merita attenzione (nuovo cliente che scrive prima di un acquisto, collaborazione, problema, banca, questioni legali, stampa/influencer)
+- "fornitori_cinte": SOLO se è chiaro che il mittente produce/fornisce le cinture stesse al brand (pelle, conceria, taglio, cucitura)
+- "fornitori_fibbie": SOLO se è chiaro che il mittente produce/fornisce fibbie e componenti metallici al brand
+- "fornitori_packaging": SOLO se è chiaro che il mittente fornisce scatole, imballaggi, buste al brand
+- "fornitori_cartellini": SOLO se è chiaro che il mittente fornisce cartellini, etichette, stampe al brand
+- "fornitori_generali": SOLO se è chiaro un rapporto commerciale in corso in cui il mittente fornisce un servizio pagato al brand (corriere, commercialista, agenzia, hosting/software)
+- "importanti": usa questa come categoria di DEFAULT ogni volta che non sei sicuro al 100% che sia un fornitore — comprende nuovi clienti, richieste di collaborazione, notifiche di servizi generici, domande, problemi, banca, questioni legali, stampa/influencer, o qualunque email ambigua
+Nel dubbio scegli SEMPRE "importanti": è preferibile che Manuel debba spostarla a mano una volta, piuttosto che una email importante finisca nascosta tra i fornitori.
 Rispondi SOLO con un oggetto JSON valido, senza testo prima o dopo: le chiavi sono gli id forniti, i valori sono una delle categorie sopra elencate (mai "clienti", quella è già gestita separatamente).`;
 
 async function classifyRemaining(items: { id: string; from: string; subject: string; snippet: string }[]): Promise<Record<string, string>> {

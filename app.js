@@ -629,7 +629,7 @@
       `<button class="pill pill--sm ${key === currentReplyFilter ? 'pill--dark' : 'pill--ghost'}" data-reply="${key}">${label}</button>`
     ).join('');
     document.querySelectorAll('#postaReplyTabs [data-reply]').forEach((btn) => {
-      btn.addEventListener('click', () => { currentReplyFilter = btn.dataset.reply; renderPostaEmailList(); });
+      btn.addEventListener('click', () => { currentReplyFilter = btn.dataset.reply; renderPostaControls(); renderPostaEmailList(); });
     });
   }
 
