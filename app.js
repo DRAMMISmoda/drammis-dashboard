@@ -15,9 +15,24 @@
   const GOOGLE_CLIENT_ID = '942982110982-r7bdn2uei5a0lv794p418190m7mk7i5b.apps.googleusercontent.com';
   const GMAIL_REDIRECT_URI = 'https://lyflfedxiosvayxjttzt.supabase.co/functions/v1/gmail-oauth-callback';
   const GMAIL_PROXY_URL = 'https://lyflfedxiosvayxjttzt.supabase.co/functions/v1/gmail-proxy';
+  const CATEGORY_OPTIONS = [
+    { value: 'clienti', label: 'Clienti' },
+    { value: 'fornitori_cinte', label: 'Fornitori · Cinte' },
+    { value: 'fornitori_fibbie', label: 'Fornitori · Fibbie' },
+    { value: 'fornitori_packaging', label: 'Fornitori · Packaging' },
+    { value: 'fornitori_cartellini', label: 'Fornitori · Cartellini' },
+    { value: 'fornitori_generali', label: 'Fornitori · Generali' },
+    { value: 'importanti', label: 'Importanti' },
+  ];
+  const SUPPLIER_SUBS = [['tutti', 'Tutti'], ['cinte', 'Cinte'], ['fibbie', 'Fibbie'], ['packaging', 'Packaging'], ['cartellini', 'Cartellini'], ['generali', 'Generali']];
+  const REPLY_FILTERS = [['tutti', 'Tutti'], ['da_rispondere', 'Da rispondere'], ['risposto', 'Già risposto']];
+  const BUCKET_ORDER = ['Oggi', 'Ieri', 'Questa settimana', 'Più vecchie'];
+
   let currentEmailCategory = 'clienti';
-  let emailsCache = [];
-  let currentEmailDetail = null;
+  let currentSupplierSub = 'tutti';
+  let currentReplyFilter = 'tutti';
+  let threadsCache = [];
+  let currentThreadDetail = null;
   let emailChatHistory = [];
   let gmailReturnStatus = null;
 
@@ -29,6 +44,22 @@
       body: JSON.stringify({ action, ...(extra || {}) }),
     });
     return res.json();
+  }
+
+  function dateBucket(dateStr) {
+    const d = new Date(dateStr);
+    const now = new Date();
+    const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startYesterday = new Date(startToday.getTime() - 86400000);
+    const startWeek = new Date(startToday.getTime() - 6 * 86400000);
+    if (d >= startToday) return 'Oggi';
+    if (d >= startYesterday) return 'Ieri';
+    if (d >= startWeek) return 'Questa settimana';
+    return 'Più vecchie';
+  }
+
+  function buildTranscript(thread) {
+    return thread.messages.map((m) => `${m.isMe ? 'Tu' : 'Loro'} (${m.date}):\n${m.body}`).join('\n\n---\n\n');
   }
 
   /* ---------- CODICE DI SICUREZZA (PIN a 6 cifre) ----------
@@ -538,77 +569,149 @@
       <div class="section-detail">
         <span class="section-detail__hint">Posta di ${escapeHtml(connectedEmail || '')}</span>
         <div class="admin__periods" id="postaTabs"></div>
+        <div class="admin__periods" id="postaSubTabs" hidden></div>
+        <div class="admin__periods" id="postaReplyTabs"></div>
         <div id="postaList"></div>
-        <div id="supplierManager" style="margin-top:2rem"></div>
       </div>`;
 
     gmailCall('list').then((res) => {
       if (res.error) { app.innerHTML = `<p class="msg">Non riesco a caricare le email. Riprova tra poco.</p>`; return; }
-      emailsCache = res.emails || [];
-      const counts = { clienti: 0, fornitori: 0, importanti: 0 };
-      emailsCache.forEach((e) => { counts[e.category] = (counts[e.category] || 0) + 1; });
-
-      document.getElementById('postaSummary').innerHTML = `
-        <div class="section-summary__stat"><span class="section-summary__label">Clienti</span><span class="section-summary__value">${counts.clienti}</span></div>
-        <div class="section-summary__stat"><span class="section-summary__label">Fornitori</span><span class="section-summary__value">${counts.fornitori}</span></div>
-        <div class="section-summary__stat"><span class="section-summary__label">Importanti</span><span class="section-summary__value">${counts.importanti}</span></div>`;
-
-      document.getElementById('postaTabs').innerHTML = ['clienti', 'fornitori', 'importanti'].map((cat) =>
-        `<button class="pill ${cat === currentEmailCategory ? 'pill--dark' : 'pill--ghost'}" data-cat="${cat}">${cat[0].toUpperCase() + cat.slice(1)} (${counts[cat] || 0})</button>`
-      ).join('');
-      document.querySelectorAll('#postaTabs [data-cat]').forEach((btn) => {
-        btn.addEventListener('click', () => { currentEmailCategory = btn.dataset.cat; renderPostaEmailList(); });
-      });
-
+      threadsCache = res.threads || [];
+      renderPostaControls();
       renderPostaEmailList();
-      renderSupplierManager(document.getElementById('supplierManager'));
     }).catch(() => {
       app.innerHTML = `<p class="msg">Non riesco a caricare le email. Riprova tra poco.</p>`;
+    });
+  }
+
+  function renderPostaControls() {
+    const counts = { clienti: 0, fornitori: 0, importanti: 0, da_rispondere: 0 };
+    threadsCache.forEach((t) => {
+      if (t.category === 'clienti') counts.clienti++;
+      else if (t.category === 'importanti') counts.importanti++;
+      else counts.fornitori++;
+      if (t.needsReply) counts.da_rispondere++;
+    });
+
+    document.getElementById('postaSummary').innerHTML = `
+      <div class="section-summary__stat"><span class="section-summary__label">Clienti</span><span class="section-summary__value">${counts.clienti}</span></div>
+      <div class="section-summary__stat"><span class="section-summary__label">Fornitori</span><span class="section-summary__value">${counts.fornitori}</span></div>
+      <div class="section-summary__stat"><span class="section-summary__label">Importanti</span><span class="section-summary__value">${counts.importanti}</span></div>
+      <div class="section-summary__stat"><span class="section-summary__label">Da rispondere</span><span class="section-summary__value">${counts.da_rispondere}</span></div>`;
+
+    document.getElementById('postaTabs').innerHTML = ['clienti', 'fornitori', 'importanti'].map((cat) =>
+      `<button class="pill ${cat === currentEmailCategory ? 'pill--dark' : 'pill--ghost'}" data-cat="${cat}">${cat[0].toUpperCase() + cat.slice(1)}</button>`
+    ).join('');
+    document.querySelectorAll('#postaTabs [data-cat]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        currentEmailCategory = btn.dataset.cat;
+        currentSupplierSub = 'tutti';
+        renderPostaControls();
+        renderPostaEmailList();
+      });
+    });
+
+    const subTabsEl = document.getElementById('postaSubTabs');
+    if (currentEmailCategory === 'fornitori') {
+      subTabsEl.hidden = false;
+      subTabsEl.innerHTML = SUPPLIER_SUBS.map(([key, label]) =>
+        `<button class="pill pill--sm ${key === currentSupplierSub ? 'pill--dark' : 'pill--ghost'}" data-sub="${key}">${label}</button>`
+      ).join('');
+      subTabsEl.querySelectorAll('[data-sub]').forEach((btn) => {
+        btn.addEventListener('click', () => { currentSupplierSub = btn.dataset.sub; renderPostaControls(); renderPostaEmailList(); });
+      });
+    } else {
+      subTabsEl.hidden = true;
+      subTabsEl.innerHTML = '';
+    }
+
+    document.getElementById('postaReplyTabs').innerHTML = REPLY_FILTERS.map(([key, label]) =>
+      `<button class="pill pill--sm ${key === currentReplyFilter ? 'pill--dark' : 'pill--ghost'}" data-reply="${key}">${label}</button>`
+    ).join('');
+    document.querySelectorAll('#postaReplyTabs [data-reply]').forEach((btn) => {
+      btn.addEventListener('click', () => { currentReplyFilter = btn.dataset.reply; renderPostaEmailList(); });
     });
   }
 
   function renderPostaEmailList() {
     const listEl = document.getElementById('postaList');
     if (!listEl) return;
-    document.querySelectorAll('#postaTabs [data-cat]').forEach((btn) => {
-      btn.classList.toggle('pill--dark', btn.dataset.cat === currentEmailCategory);
-      btn.classList.toggle('pill--ghost', btn.dataset.cat !== currentEmailCategory);
+
+    let filtered = threadsCache.filter((t) => {
+      if (currentEmailCategory === 'clienti') return t.category === 'clienti';
+      if (currentEmailCategory === 'importanti') return t.category === 'importanti';
+      if (!t.category.startsWith('fornitori_')) return false;
+      if (currentSupplierSub !== 'tutti' && t.category !== 'fornitori_' + currentSupplierSub) return false;
+      return true;
     });
-    const filtered = emailsCache.filter((e) => e.category === currentEmailCategory);
-    listEl.innerHTML = filtered.length
-      ? `<div class="email-list">${filtered.map((e) => `
-          <button class="email-item${e.unread ? ' email-item--unread' : ''}" data-id="${e.id}">
-            <span class="email-item__from">${escapeHtml(e.from)}</span>
-            <span class="email-item__subject">${escapeHtml(e.subject || '(nessun oggetto)')}</span>
-            <span class="email-item__snippet">${escapeHtml(e.snippet || '')}</span>
-          </button>`).join('')}</div>`
-      : `<p class="msg">Nessuna email in questa categoria.</p>`;
+    if (currentReplyFilter === 'da_rispondere') filtered = filtered.filter((t) => t.needsReply);
+    else if (currentReplyFilter === 'risposto') filtered = filtered.filter((t) => !t.needsReply);
+    filtered.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    const groups = {};
+    filtered.forEach((t) => {
+      const b = dateBucket(t.date);
+      if (!groups[b]) groups[b] = [];
+      groups[b].push(t);
+    });
+
+    const html = BUCKET_ORDER.filter((b) => groups[b] && groups[b].length).map((b) => `
+      <div class="email-date-group">
+        <h4 class="email-date-group__label">${b}</h4>
+        <div class="email-list">${groups[b].map((t) => `
+          <button class="email-item${t.unread ? ' email-item--unread' : ''}" data-id="${t.id}">
+            <span class="email-item__top">
+              <span class="email-item__from">${escapeHtml(t.from)}</span>
+              ${t.needsReply ? '<span class="email-item__badge">Da rispondere</span>' : ''}
+            </span>
+            <span class="email-item__subject">${escapeHtml(t.subject || '(nessun oggetto)')}${t.messageCount > 1 ? ` (${t.messageCount})` : ''}</span>
+            <span class="email-item__snippet">${escapeHtml(t.snippet || '')}</span>
+          </button>`).join('')}</div>
+      </div>`).join('');
+
+    listEl.innerHTML = html || `<p class="msg">Nessuna email qui.</p>`;
     listEl.querySelectorAll('[data-id]').forEach((btn) => {
-      btn.addEventListener('click', () => openEmailDetail(btn.dataset.id));
+      btn.addEventListener('click', () => openThreadDetail(btn.dataset.id));
     });
   }
 
-  function openEmailDetail(id) {
-    app.innerHTML = `<p class="msg">Apro l'email…</p>`;
+  function openThreadDetail(id) {
+    app.innerHTML = `<p class="msg">Apro la conversazione…</p>`;
     gmailCall('get', { id }).then((res) => {
-      if (res.error || !res.email) { app.innerHTML = `<p class="msg">Non riesco ad aprire l'email.</p>`; return; }
-      currentEmailDetail = res.email;
+      if (res.error || !res.thread) { app.innerHTML = `<p class="msg">Non riesco ad aprire la conversazione.</p>`; return; }
+      currentThreadDetail = res.thread;
       emailChatHistory = [];
-      renderEmailDetailView();
-    }).catch(() => { app.innerHTML = `<p class="msg">Non riesco ad aprire l'email.</p>`; });
+      renderThreadDetailView();
+    }).catch(() => { app.innerHTML = `<p class="msg">Non riesco ad aprire la conversazione.</p>`; });
   }
 
-  function renderEmailDetailView() {
-    const e = currentEmailDetail;
+  function renderThreadDetailView() {
+    const t = currentThreadDetail;
+    const found = threadsCache.find((x) => x.id === t.threadId);
+    const currentCategory = found ? found.category : 'importanti';
+
     app.innerHTML = `
       <button class="pill pill--ghost" id="backToListBtn" style="margin-bottom:1rem">← Torna alla lista</button>
-      <div class="admin__table-card" style="margin-bottom:1.4rem">
-        <h3>${escapeHtml(e.subject || '(nessun oggetto)')}</h3>
-        <p class="msg">Da: ${escapeHtml(e.from)}<br>${escapeHtml(e.date)}</p>
-        <div class="email-body">${escapeHtml(e.body).replace(/\n/g, '<br>')}</div>
+
+      <div class="admin__table-card" style="margin-bottom:1rem">
+        <h3>${escapeHtml(t.subject || '(nessun oggetto)')}</h3>
+        <p class="msg">Con: ${escapeHtml(t.otherFrom)}</p>
+        <label class="msg" style="display:block;margin-top:.8rem">Categoria
+          <select id="categoryPicker" style="display:block;margin-top:.4rem;padding:.6rem .8rem;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--fg);font-family:inherit;width:100%">
+            ${CATEGORY_OPTIONS.map((o) => `<option value="${o.value}" ${o.value === currentCategory ? 'selected' : ''}>${o.label}</option>`).join('')}
+          </select>
+        </label>
       </div>
 
-      <div class="admin__table-card" style="margin-bottom:1.4rem">
+      <div class="thread-view" id="threadMessages">
+        ${t.messages.map((m) => `
+          <div class="email-chat-msg ${m.isMe ? 'email-chat-msg--user' : 'email-chat-msg--ai'}" style="align-self:${m.isMe ? 'flex-end' : 'flex-start'}">
+            <div class="thread-msg__meta">${escapeHtml(m.isMe ? 'Tu' : m.from)} · ${escapeHtml(m.date)}</div>
+            <div class="thread-msg__body">${escapeHtml(m.body).replace(/\n/g, '<br>')}</div>
+          </div>`).join('')}
+      </div>
+
+      <div class="admin__table-card" style="margin:1.4rem 0">
         <h3>Bozza di risposta (AI)</h3>
         <p class="msg" id="draftStatus">Genero una proposta…</p>
         <textarea id="draftReply" rows="8" style="width:100%;margin-top:.8rem;padding:.8rem;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--fg);font-family:inherit" placeholder="La bozza apparirà qui…"></textarea>
@@ -627,7 +730,13 @@
         </form>
       </div>`;
 
-    document.getElementById('backToListBtn').addEventListener('click', () => { currentEmailDetail = null; renderPostaSection(); });
+    document.getElementById('backToListBtn').addEventListener('click', () => { currentThreadDetail = null; renderPostaSection(); });
+    document.getElementById('categoryPicker').addEventListener('change', (ev) => {
+      gmailCall('set_category', { email: t.otherEmail, category: ev.target.value }).then(() => {
+        const idx = threadsCache.findIndex((x) => x.id === t.threadId);
+        if (idx !== -1) threadsCache[idx].category = ev.target.value;
+      });
+    });
     document.getElementById('regenDraftBtn').addEventListener('click', () => generateDraft());
     document.getElementById('confirmSendBtn').addEventListener('click', () => confirmAndSend());
     document.getElementById('emailChatForm').addEventListener('submit', (ev) => {
@@ -646,12 +755,13 @@
     const statusEl = document.getElementById('draftStatus');
     const textarea = document.getElementById('draftReply');
     if (statusEl) { statusEl.hidden = false; statusEl.textContent = 'Genero una proposta…'; }
-    gmailCall('propose_reply', { emailContext: { from: currentEmailDetail.from, subject: currentEmailDetail.subject, body: currentEmailDetail.body } })
+    const t = currentThreadDetail;
+    gmailCall('propose_reply', { emailContext: { from: t.otherFrom, subject: t.subject, transcript: buildTranscript(t) } })
       .then((res) => {
         if (statusEl) statusEl.hidden = true;
         if (textarea) textarea.value = res.reply || '';
         emailChatHistory = [
-          { role: 'user', content: 'Proponi una bozza di risposta a questa email.' },
+          { role: 'user', content: 'Proponi una bozza di risposta a questa conversazione.' },
           { role: 'assistant', content: res.reply || '' },
         ];
       })
@@ -663,8 +773,9 @@
     if (log) log.innerHTML += `<div class="email-chat-msg email-chat-msg--user">${escapeHtml(message)}</div>`;
     const historyBefore = emailChatHistory.slice();
     emailChatHistory.push({ role: 'user', content: message });
+    const t = currentThreadDetail;
 
-    gmailCall('chat', { emailContext: { from: currentEmailDetail.from, subject: currentEmailDetail.subject, body: currentEmailDetail.body }, history: historyBefore, message })
+    gmailCall('chat', { emailContext: { from: t.otherFrom, subject: t.subject, transcript: buildTranscript(t) }, history: historyBefore, message })
       .then((res) => {
         emailChatHistory.push({ role: 'assistant', content: res.reply || '' });
         if (log) log.innerHTML += `<div class="email-chat-msg email-chat-msg--ai">${escapeHtml(res.reply || '')}</div>`;
@@ -677,24 +788,22 @@
     const textarea = document.getElementById('draftReply');
     const text = textarea ? textarea.value.trim() : '';
     if (!text) { alert('Scrivi o genera prima una risposta.'); return; }
-    if (!confirm(`Invio questa risposta a ${currentEmailDetail.from}?\n\n${text}`)) return;
+    const t = currentThreadDetail;
+    if (!confirm(`Invio questa risposta a ${t.otherFrom}?\n\n${text}`)) return;
 
     const btn = document.getElementById('confirmSendBtn');
     if (btn) { btn.disabled = true; btn.textContent = 'Invio…'; }
 
-    const fromMatch = currentEmailDetail.from.match(/<([^>]+)>/);
-    const toEmail = fromMatch ? fromMatch[1] : currentEmailDetail.from;
-
     gmailCall('send', {
-      threadId: currentEmailDetail.threadId,
-      toEmail,
-      subject: currentEmailDetail.subject,
+      threadId: t.threadId,
+      toEmail: t.otherEmail,
+      subject: t.subject,
       text,
-      messageIdHeader: currentEmailDetail.messageIdHeader,
+      messageIdHeader: t.lastMessageIdHeader,
     }).then((res) => {
       if (res.ok) {
         alert('Email inviata.');
-        currentEmailDetail = null;
+        currentThreadDetail = null;
         renderPostaSection();
       } else {
         alert('Errore durante l\'invio: ' + (res.error || 'sconosciuto'));
@@ -703,36 +812,6 @@
     }).catch(() => {
       alert('Errore durante l\'invio.');
       if (btn) { btn.disabled = false; btn.textContent = 'Rivedi e invia →'; }
-    });
-  }
-
-  function renderSupplierManager(container) {
-    if (!container) return;
-    container.innerHTML = `<p class="msg">Carico fornitori…</p>`;
-    supa.from('known_suppliers').select('id, email, name').order('created_at', { ascending: false }).then(({ data }) => {
-      const suppliers = data || [];
-      container.innerHTML = `
-        <div class="admin__table-card">
-          <h3>Fornitori riconosciuti</h3>
-          <p class="msg">Le email di questi indirizzi finiscono nella categoria "Fornitori" invece che "Importanti".</p>
-          <div id="supplierList">${suppliers.map((s) => `<div class="supplier-row"><span>${escapeHtml(s.email)}</span><button class="pill pill--ghost" data-remove="${s.id}">Rimuovi</button></div>`).join('') || '<p class="msg">Nessun fornitore aggiunto.</p>'}</div>
-          <form id="addSupplierForm" style="display:flex;gap:.6rem;margin-top:1rem">
-            <input type="email" id="newSupplierEmail" placeholder="email@fornitore.com" required style="flex:1;padding:.7rem 1rem;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--fg);font-family:inherit">
-            <button class="pill pill--dark" type="submit">Aggiungi</button>
-          </form>
-        </div>`;
-      container.querySelectorAll('[data-remove]').forEach((btn) => {
-        btn.addEventListener('click', () => {
-          supa.from('known_suppliers').delete().eq('id', btn.dataset.remove).then(() => renderSupplierManager(container));
-        });
-      });
-      document.getElementById('addSupplierForm').addEventListener('submit', (ev) => {
-        ev.preventDefault();
-        const input = document.getElementById('newSupplierEmail');
-        const email = input.value.trim().toLowerCase();
-        if (!email) return;
-        supa.from('known_suppliers').insert({ email }).then(() => renderSupplierManager(container));
-      });
     });
   }
 

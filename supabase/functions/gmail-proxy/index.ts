@@ -16,6 +16,9 @@ const anthropic = new Anthropic({ apiKey: Deno.env.get("ANTHROPIC_API_KEY") });
 const CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID")!;
 const CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
 
+const SUPPLIER_CATEGORIES = ["fornitori_cinte", "fornitori_fibbie", "fornitori_packaging", "fornitori_cartellini", "fornitori_generali"];
+const ALL_CATEGORIES = ["clienti", ...SUPPLIER_CATEGORIES, "importanti"];
+
 async function getCaller(req: Request) {
   const authHeader = req.headers.get("Authorization");
   if (!authHeader) return null;
@@ -27,12 +30,12 @@ async function getCaller(req: Request) {
   return data.user;
 }
 
-async function getAccessToken(userId: string): Promise<string | null> {
+async function getAccessToken(userId: string): Promise<{ accessToken: string | null; email: string | null }> {
   const { data: row } = await supabaseAdmin.from("google_tokens").select("*").eq("user_id", userId).maybeSingle();
-  if (!row) return null;
+  if (!row) return { accessToken: null, email: null };
 
   const expiresAt = row.access_token_expires_at ? new Date(row.access_token_expires_at).getTime() : 0;
-  if (row.access_token && expiresAt > Date.now() + 60000) return row.access_token;
+  if (row.access_token && expiresAt > Date.now() + 60000) return { accessToken: row.access_token, email: row.email };
 
   const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
@@ -47,7 +50,7 @@ async function getAccessToken(userId: string): Promise<string | null> {
   const tokenData = await tokenRes.json();
   if (!tokenRes.ok) {
     console.error("refresh failed", tokenData);
-    return null;
+    return { accessToken: null, email: row.email };
   }
 
   await supabaseAdmin.from("google_tokens").update({
@@ -56,12 +59,17 @@ async function getAccessToken(userId: string): Promise<string | null> {
     updated_at: new Date().toISOString(),
   }).eq("user_id", userId);
 
-  return tokenData.access_token;
+  return { accessToken: tokenData.access_token, email: row.email };
 }
 
 function headerVal(headers: any[], name: string): string {
   const h = headers?.find((h: any) => h.name.toLowerCase() === name.toLowerCase());
   return h?.value || "";
+}
+
+function extractEmail(from: string): string {
+  const match = from.match(/<([^>]+)>/);
+  return (match ? match[1] : from).toLowerCase().trim();
 }
 
 function decodeBase64Url(data: string): string {
@@ -103,10 +111,25 @@ async function gmailFetch(accessToken: string, path: string, init: RequestInit =
   return res.json();
 }
 
-const CATEGORY_SYSTEM_PROMPT = `Analizza queste email arrivate nella casella di DRAMMIS, un piccolo brand italiano di cinture in pelle. Per ciascuna decidi se è:
-- "fornitori": email da chi vende materiali, produce, spedisce o fornisce servizi al brand (es. conceria, produttore fibbie, corriere, tipografia, commercialista, agenzia, piattaforma software/hosting, packaging)
-- "importanti": qualsiasi altra email genuina che merita attenzione (nuovo cliente che scrive prima di un acquisto, richiesta di collaborazione, problema, banca, questioni legali, stampa/influencer, ecc)
-Rispondi SOLO con un oggetto JSON valido, senza testo prima o dopo: le chiavi sono gli id delle email, i valori sono "fornitori" oppure "importanti".`;
+async function getContacts(): Promise<Record<string, string>> {
+  const { data } = await supabaseAdmin.from("email_contacts").select("email, category");
+  const map: Record<string, string> = {};
+  (data || []).forEach((r: any) => { map[r.email.toLowerCase()] = r.category; });
+  return map;
+}
+
+async function saveContact(email: string, category: string) {
+  await supabaseAdmin.from("email_contacts").upsert({ email: email.toLowerCase(), category, updated_at: new Date().toISOString() });
+}
+
+const CATEGORY_SYSTEM_PROMPT = `Analizza queste email/conversazioni arrivate nella casella di DRAMMIS, un piccolo brand italiano di cinture in pelle. Per ciascuna scegli UNA categoria tra:
+- "fornitori_cinte": chi produce/fornisce le cinture stesse (pelle, conceria, taglio, cucitura)
+- "fornitori_fibbie": chi produce/fornisce fibbie e componenti metallici
+- "fornitori_packaging": chi fornisce scatole, imballaggi, buste
+- "fornitori_cartellini": chi fornisce cartellini, etichette, stampe
+- "fornitori_generali": altri fornitori/servizi al brand non compresi sopra (corriere, commercialista, agenzia, hosting/software)
+- "importanti": qualsiasi altra email genuina che merita attenzione (nuovo cliente che scrive prima di un acquisto, collaborazione, problema, banca, questioni legali, stampa/influencer)
+Rispondi SOLO con un oggetto JSON valido, senza testo prima o dopo: le chiavi sono gli id forniti, i valori sono una delle categorie sopra elencate (mai "clienti", quella è già gestita separatamente).`;
 
 async function classifyRemaining(items: { id: string; from: string; subject: string; snippet: string }[]): Promise<Record<string, string>> {
   if (!items.length) return {};
@@ -128,66 +151,92 @@ async function classifyRemaining(items: { id: string; from: string; subject: str
   }
 }
 
-async function listEmails(accessToken: string) {
-  // esclude social/pubblicità/notifiche automatiche usando la classificazione che Gmail fa già da solo,
-  // così restano solo email vere (persone che scrivono davvero) da smistare in clienti/fornitori/importanti
+async function listThreads(accessToken: string, myEmail: string) {
   const query = "in:inbox -category:social -category:promotions -category:updates -category:forums";
-  const list = await gmailFetch(accessToken, `/messages?maxResults=20&q=${encodeURIComponent(query)}`);
-  const ids = (list.messages || []).map((m: any) => m.id);
-  const details = await Promise.all(
-    ids.map((id: string) =>
-      gmailFetch(accessToken, `/messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`)
+  const list = await gmailFetch(accessToken, `/threads?maxResults=20&q=${encodeURIComponent(query)}`);
+  const threadIds = (list.threads || []).map((t: any) => t.id);
+
+  const threads = await Promise.all(
+    threadIds.map((id: string) =>
+      gmailFetch(accessToken, `/threads/${id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`)
     )
   );
 
-  const [{ data: suppliers }, { data: orders }] = await Promise.all([
-    supabaseAdmin.from("known_suppliers").select("email"),
+  const [contacts, { data: orders }] = await Promise.all([
+    getContacts(),
     supabaseAdmin.from("orders").select("email"),
   ]);
-  const supplierEmails = new Set((suppliers || []).map((s: any) => s.email.toLowerCase()));
   const customerEmails = new Set((orders || []).map((o: any) => (o.email || "").toLowerCase()));
+  const myEmailLower = (myEmail || "").toLowerCase();
 
-  const parsed = details.map((d: any) => {
-    const from = headerVal(d.payload.headers, "From");
-    const match = from.match(/<([^>]+)>/);
-    const fromEmail = (match ? match[1] : from).toLowerCase().trim();
-    let category: string | null = null;
-    if (customerEmails.has(fromEmail)) category = "clienti";
-    else if (supplierEmails.has(fromEmail)) category = "fornitori";
+  const toClassify: { id: string; from: string; subject: string; snippet: string }[] = [];
+  const prepared = threads.map((t: any) => {
+    const messages = t.messages || [];
+    const first = messages[0];
+    const last = messages[messages.length - 1];
+    const from = headerVal(first.payload.headers, "From");
+    const fromEmail = extractEmail(from);
+    const lastFromEmail = extractEmail(headerVal(last.payload.headers, "From"));
+
+    let category = contacts[fromEmail] || null;
+    if (!category && customerEmails.has(fromEmail)) category = "clienti";
+    const subject = headerVal(first.payload.headers, "Subject");
+    if (!category) toClassify.push({ id: t.id, from, subject, snippet: t.snippet });
+
     return {
-      id: d.id,
-      threadId: d.threadId,
+      id: t.id,
       from,
       fromEmail,
-      subject: headerVal(d.payload.headers, "Subject"),
-      date: headerVal(d.payload.headers, "Date"),
-      snippet: d.snippet,
-      unread: (d.labelIds || []).includes("UNREAD"),
+      subject,
+      date: headerVal(last.payload.headers, "Date"),
+      snippet: t.snippet,
+      unread: messages.some((m: any) => (m.labelIds || []).includes("UNREAD")),
+      needsReply: lastFromEmail !== myEmailLower,
+      messageCount: messages.length,
       category,
     };
   });
 
-  // per le email che non corrispondono né a un cliente né a un fornitore già noto,
-  // chiede all'AI di leggerne il contenuto e decidere fornitori/importanti
-  const undetermined = parsed.filter((e) => !e.category);
-  const aiCategories = await classifyRemaining(undetermined.map((e) => ({ id: e.id, from: e.from, subject: e.subject, snippet: e.snippet })));
+  const aiResults = await classifyRemaining(toClassify);
+  const learnPromises: Promise<any>[] = [];
+  const final = prepared.map((t: any) => {
+    let category = t.category;
+    if (!category) {
+      category = ALL_CATEGORIES.includes(aiResults[t.id]) ? aiResults[t.id] : "importanti";
+    }
+    if (!contacts[t.fromEmail]) learnPromises.push(saveContact(t.fromEmail, category));
+    return { ...t, category };
+  });
+  await Promise.all(learnPromises);
 
-  return parsed.map((e) => ({
-    ...e,
-    category: e.category || (aiCategories[e.id] === "fornitori" ? "fornitori" : "importanti"),
-  }));
+  return final;
 }
 
-async function getEmail(accessToken: string, id: string) {
-  const d = await gmailFetch(accessToken, `/messages/${id}?format=full`);
+async function getThread(accessToken: string, threadId: string, myEmail: string) {
+  const t = await gmailFetch(accessToken, `/threads/${threadId}?format=full`);
+  const myEmailLower = (myEmail || "").toLowerCase();
+  const messages = (t.messages || []).map((m: any) => {
+    const from = headerVal(m.payload.headers, "From");
+    const fromEmail = extractEmail(from);
+    return {
+      id: m.id,
+      from,
+      date: headerVal(m.payload.headers, "Date"),
+      subject: headerVal(m.payload.headers, "Subject"),
+      messageIdHeader: headerVal(m.payload.headers, "Message-ID"),
+      body: findBodyPart(m.payload),
+      isMe: fromEmail === myEmailLower,
+    };
+  });
+  const last = messages[messages.length - 1];
+  const other = messages.find((m: any) => !m.isMe) || messages[0];
   return {
-    id: d.id,
-    threadId: d.threadId,
-    from: headerVal(d.payload.headers, "From"),
-    subject: headerVal(d.payload.headers, "Subject"),
-    date: headerVal(d.payload.headers, "Date"),
-    messageIdHeader: headerVal(d.payload.headers, "Message-ID"),
-    body: findBodyPart(d.payload),
+    threadId: t.id,
+    subject: messages[0]?.subject || "",
+    otherFrom: other?.from || "",
+    otherEmail: other ? extractEmail(other.from) : "",
+    messages,
+    lastMessageIdHeader: last?.messageIdHeader || "",
   };
 }
 
@@ -209,7 +258,7 @@ async function sendReply(accessToken: string, threadId: string, toEmail: string,
   });
 }
 
-const EMAIL_SYSTEM_PROMPT = `Sei l'assistente personale di Manuel, il fondatore di DRAMMIS (maison italiana di cinture). Lo aiuti a gestire la posta di info.drammis@gmail.com. Rispondi sempre in italiano, tono professionale, cordiale, diretto e conciso, come scriverebbe Manuel stesso a un cliente o fornitore. Non inventare mai informazioni su ordini, prezzi o policy che non conosci: se l'email richiede dati specifici che non hai, scrivi una risposta che chiede questi dettagli oppure rimanda a info.drammis@gmail.com. Quando proponi una bozza di risposta, scrivi SOLO il testo dell'email pronto da inviare, senza commenti tuoi prima o dopo.`;
+const EMAIL_SYSTEM_PROMPT = `Sei l'assistente personale di Manuel, il fondatore di DRAMMIS (maison italiana di cinture). Lo aiuti a gestire la posta di info.drammis@gmail.com. Rispondi sempre in italiano, tono professionale, cordiale, diretto e conciso, come scriverebbe Manuel stesso a un cliente o fornitore. Non inventare mai informazioni su ordini, prezzi o policy che non conosci: se l'email richiede dati specifici che non hai, scrivi una risposta che chiede questi dettagli oppure rimanda a info.drammis@gmail.com. Ti viene data l'intera conversazione fin qui (loro e le eventuali risposte di Manuel), usala per capire il contesto. Quando proponi una bozza di risposta, scrivi SOLO il testo del prossimo messaggio da inviare, senza commenti tuoi prima o dopo.`;
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -234,17 +283,22 @@ serve(async (req) => {
       return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    if (action === "set_category") {
+      await saveContact(body.email, body.category);
+      return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     if (["list", "get", "send"].includes(action)) {
-      const accessToken = await getAccessToken(user.id);
+      const { accessToken, email: myEmail } = await getAccessToken(user.id);
       if (!accessToken) return new Response(JSON.stringify({ error: "not_connected" }), { status: 400, headers: corsHeaders });
 
       if (action === "list") {
-        const emails = await listEmails(accessToken);
-        return new Response(JSON.stringify({ emails }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        const threads = await listThreads(accessToken, myEmail || "");
+        return new Response(JSON.stringify({ threads }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
       if (action === "get") {
-        const email = await getEmail(accessToken, body.id);
-        return new Response(JSON.stringify({ email }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        const thread = await getThread(accessToken, body.id, myEmail || "");
+        return new Response(JSON.stringify({ thread }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
       if (action === "send") {
         const result = await sendReply(accessToken, body.threadId, body.toEmail, body.subject, body.text, body.messageIdHeader);
@@ -255,12 +309,12 @@ serve(async (req) => {
     if (action === "propose_reply" || action === "chat") {
       const emailContext = body.emailContext;
       const history = body.history || [];
-      const userMsg = action === "propose_reply" ? "Proponi una bozza di risposta a questa email." : body.message;
+      const userMsg = action === "propose_reply" ? "Proponi una bozza di risposta a questa conversazione." : body.message;
 
       const response = await anthropic.messages.create({
         model: "claude-haiku-4-5",
         max_tokens: 1024,
-        system: `${EMAIL_SYSTEM_PROMPT}\n\nEMAIL RICEVUTA:\nDa: ${emailContext.from}\nOggetto: ${emailContext.subject}\n\n${emailContext.body}`,
+        system: `${EMAIL_SYSTEM_PROMPT}\n\nCONVERSAZIONE CON: ${emailContext.from}\nOggetto: ${emailContext.subject}\n\n${emailContext.transcript}`,
         messages: [...history, { role: "user", content: userMsg }],
       });
       const textBlock = response.content.find((b: any) => b.type === "text") as any;
