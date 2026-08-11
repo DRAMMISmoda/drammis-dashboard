@@ -19,10 +19,19 @@
 <body>
 
 <div class="topbar">
+  <button class="menu-btn" id="menuBtn" hidden aria-label="Apri menu">☰</button>
   <span class="topbar__logo">DRAMMIS</span>
-  <span class="topbar__tag">Dashboard privata</span>
+  <span class="topbar__section" id="topbarSection"></span>
   <button class="pill pill--ghost" id="logoutBtn" hidden>Blocca</button>
 </div>
+
+<div class="menu-overlay" id="menuOverlay" hidden></div>
+<nav class="menu-drawer" id="menuDrawer" hidden>
+  <button class="menu-drawer__item" data-section="vendite">Vendite</button>
+  <button class="menu-drawer__item" data-section="resi">Resi</button>
+  <button class="menu-drawer__item" data-section="traffico">Traffico</button>
+  <button class="menu-drawer__item" data-section="impostazioni">Impostazioni</button>
+</nav>
 
 <main id="app">
   <p class="msg">Verifica accesso…</p>

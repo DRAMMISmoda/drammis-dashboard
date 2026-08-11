@@ -54,6 +54,7 @@
 
   function renderPinSetup() {
     logoutBtn.hidden = false;
+    menuBtn.hidden = true;
     app.innerHTML = `
       <div class="login-card">
         <h1>Crea un codice</h1>
@@ -75,12 +76,13 @@
       if (a !== b) { msg.hidden = false; msg.textContent = 'I due codici non coincidono.'; return; }
       localStorage.setItem(PIN_HASH_KEY, await hashPin(a));
       sessionStorage.setItem(PIN_UNLOCK_KEY, '1');
-      renderDashboard('week');
+      renderDashboard();
     });
   }
 
   function renderPinLock() {
     logoutBtn.hidden = false;
+    menuBtn.hidden = true;
     app.innerHTML = `
       <div class="login-card">
         <h1>Inserisci il codice</h1>
@@ -101,7 +103,7 @@
       const storedHash = localStorage.getItem(PIN_HASH_KEY);
       if (await hashPin(entered) === storedHash) {
         sessionStorage.setItem(PIN_UNLOCK_KEY, '1');
-        renderDashboard('week');
+        renderDashboard();
       } else {
         msg.hidden = false;
         msg.textContent = 'Codice sbagliato, riprova.';
@@ -119,6 +121,7 @@
   /* ---------- LOGIN GATE (email + password) ---------- */
   function renderLoginGate(errorText) {
     logoutBtn.hidden = true;
+    menuBtn.hidden = true;
     app.innerHTML = `
       <div class="login-card">
         <h1>Accedi</h1>
@@ -154,6 +157,7 @@
 
   function renderForgotGate() {
     logoutBtn.hidden = true;
+    menuBtn.hidden = true;
     app.innerHTML = `
       <div class="login-card">
         <h1>Recupera password</h1>
@@ -185,6 +189,7 @@
 
   function renderRecoveryGate() {
     logoutBtn.hidden = true;
+    menuBtn.hidden = true;
     app.innerHTML = `
       <div class="login-card">
         <h1>Nuova password</h1>
@@ -215,76 +220,111 @@
 
   function renderNotAdmin() {
     logoutBtn.hidden = false;
+    menuBtn.hidden = true;
     app.innerHTML = `<div class="login-card"><h1>Accesso negato</h1><p class="msg">Questo account non ha i permessi per vedere questa dashboard.</p></div>`;
   }
 
-  /* ---------- DASHBOARD ---------- */
+  /* ---------- DASHBOARD (a sezioni, con menu) ---------- */
   const PERIODS = {
     day: { label: 'Oggi', days: 1 },
     week: { label: 'Settimana', days: 7 },
     month: { label: 'Mese', days: 30 },
     year: { label: 'Anno', days: 365 },
   };
+  const SECTIONS = {
+    vendite: 'Vendite',
+    resi: 'Resi',
+    traffico: 'Traffico',
+    impostazioni: 'Impostazioni',
+  };
   let chart = null;
+  let currentSection = 'vendite';
+  let currentPeriod = 'week';
+  const menuBtn = document.getElementById('menuBtn');
+  const menuOverlay = document.getElementById('menuOverlay');
+  const menuDrawer = document.getElementById('menuDrawer');
+  const topbarSection = document.getElementById('topbarSection');
 
-  function renderDashboard(period) {
-    period = period || 'week';
-    logoutBtn.hidden = false;
-    const cutoff = new Date(Date.now() - PERIODS[period].days * 86400000).toISOString();
-
-    app.innerHTML = `
-      <div class="admin__periods">
-        ${Object.entries(PERIODS).map(([key, p]) =>
-          `<button class="pill ${key === period ? 'pill--dark' : 'pill--ghost'}" data-period="${key}">${p.label}</button>`
-        ).join('')}
-        <button class="pill pill--ghost" id="changePinBtn">Cambia codice →</button>
-      </div>
-      <div class="admin__tiles" id="tiles"><p class="msg">Carico i dati…</p></div>
-      <div class="admin__chart-wrap"><canvas id="chart" height="90"></canvas></div>
-      <div class="admin__tables" id="tables"></div>`;
-
-    app.querySelectorAll('[data-period]').forEach((btn) => {
-      btn.addEventListener('click', () => renderDashboard(btn.dataset.period));
+  function openMenu() { menuOverlay.hidden = false; menuDrawer.hidden = false; }
+  function closeMenu() { menuOverlay.hidden = true; menuDrawer.hidden = true; }
+  menuBtn.addEventListener('click', openMenu);
+  menuOverlay.addEventListener('click', closeMenu);
+  menuDrawer.querySelectorAll('[data-section]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      currentSection = btn.dataset.section;
+      closeMenu();
+      renderDashboard();
     });
-    document.getElementById('changePinBtn').addEventListener('click', () => renderPinSetup());
+  });
 
-    Promise.all([
-      supa.from('orders').select('id, email, total, created_at, status, order_items(name, qty)').gte('created_at', cutoff).order('created_at', { ascending: false }),
-      supa.from('returns').select('status'),
-      supa.from('events').select('type, page, product_name').gte('created_at', cutoff),
-    ]).then(([ordersRes, returnsRes, eventsRes]) => {
-      if (ordersRes.error || returnsRes.error || eventsRes.error) throw new Error('data error');
-      const orders = ordersRes.data || [];
-      const returns = returnsRes.data || [];
-      const events = eventsRes.data || [];
-      renderTiles(orders, returns, events);
-      renderChart(orders);
-      renderTables(orders, returns, events);
-    }).catch(() => {
-      const t = document.getElementById('tiles');
-      if (t) t.innerHTML = `<p class="msg">Non riesco a caricare i dati. Riprova tra poco.</p>`;
+  function periodPillsHtml() {
+    return `<div class="admin__periods">${Object.entries(PERIODS).map(([key, p]) =>
+      `<button class="pill ${key === currentPeriod ? 'pill--dark' : 'pill--ghost'}" data-period="${key}">${p.label}</button>`
+    ).join('')}</div>`;
+  }
+  function wirePeriodPills(onChange) {
+    app.querySelectorAll('[data-period]').forEach((btn) => {
+      btn.addEventListener('click', () => { currentPeriod = btn.dataset.period; onChange(); });
     });
   }
 
-  function renderTiles(orders, returns, events) {
-    const el = document.getElementById('tiles');
-    if (!el) return;
-    const revenue = orders.reduce((s, o) => s + (o.total || 0), 0);
-    const avgOrder = orders.length ? Math.round(revenue / orders.length) : 0;
-    const openReturns = returns.filter((r) => r.status === 'richiesto').length;
-    const visits = events.filter((e) => e.type === 'page_view').length;
-    const productViews = events.filter((e) => e.type === 'product_view').length;
-    const tiles = [
-      ['Fatturato', euro(revenue)],
-      ['Ordini', orders.length],
-      ['Valore medio ordine', euro(avgOrder)],
-      ['Resi aperti', openReturns],
-      ['Visite', visits],
-      ['Prodotti visti', productViews],
-    ];
-    el.innerHTML = tiles.map(([label, value]) => `
-      <div class="admin__tile"><span class="admin__tile-label">${label}</span><span class="admin__tile-value">${value}</span></div>
-    `).join('');
+  function renderDashboard() {
+    logoutBtn.hidden = false;
+    menuBtn.hidden = false;
+    topbarSection.textContent = SECTIONS[currentSection];
+    menuDrawer.querySelectorAll('[data-section]').forEach((btn) => {
+      btn.classList.toggle('is-active', btn.dataset.section === currentSection);
+    });
+
+    if (currentSection === 'vendite') renderSalesSection();
+    else if (currentSection === 'resi') renderReturnsSection();
+    else if (currentSection === 'traffico') renderTrafficSection();
+    else renderSettingsSection();
+  }
+
+  /* ----- Vendite ----- */
+  function renderSalesSection() {
+    const cutoff = new Date(Date.now() - PERIODS[currentPeriod].days * 86400000).toISOString();
+    app.innerHTML = `
+      ${periodPillsHtml()}
+      <div class="section-summary" id="salesSummary"><p class="msg">Carico i dati…</p></div>
+      <div class="section-detail">
+        <span class="section-detail__hint">Dettaglio</span>
+        <div class="admin__chart-wrap"><canvas id="chart" height="90"></canvas></div>
+        <div class="admin__tables" id="salesTables"></div>
+      </div>`;
+    wirePeriodPills(renderSalesSection);
+
+    supa.from('orders').select('id, email, total, created_at, status, order_items(name, qty)').gte('created_at', cutoff).order('created_at', { ascending: false })
+      .then(({ data, error }) => {
+        if (error) throw error;
+        const orders = data || [];
+        const revenue = orders.reduce((s, o) => s + (o.total || 0), 0);
+        const avgOrder = orders.length ? Math.round(revenue / orders.length) : 0;
+
+        document.getElementById('salesSummary').innerHTML = `
+          <div class="section-summary__stat"><span class="section-summary__label">Fatturato</span><span class="section-summary__value">${euro(revenue)}</span></div>
+          <div class="section-summary__stat"><span class="section-summary__label">Ordini</span><span class="section-summary__value">${orders.length}</span></div>
+          <div class="section-summary__stat"><span class="section-summary__label">Valore medio</span><span class="section-summary__value">${euro(avgOrder)}</span></div>`;
+
+        renderChart(orders);
+
+        const recentOrders = orders.slice(0, 20).map((o) => `
+          <tr><td>${new Date(o.created_at).toLocaleDateString('it-IT')}</td><td>${o.email || '—'}</td><td>${euro(o.total)}</td><td>${o.status || '—'}</td></tr>
+        `).join('') || '<tr><td colspan="4">Nessun ordine nel periodo</td></tr>';
+
+        const productTotals = {};
+        orders.forEach((o) => (o.order_items || []).forEach((it) => { productTotals[it.name] = (productTotals[it.name] || 0) + it.qty; }));
+        const topProducts = Object.entries(productTotals).sort((a, b) => b[1] - a[1]).slice(0, 8)
+          .map(([name, qty]) => `<tr><td>${name}</td><td>${qty}</td></tr>`).join('') || '<tr><td colspan="2">Nessun dato nel periodo</td></tr>';
+
+        document.getElementById('salesTables').innerHTML = `
+          <div class="admin__table-card"><h3>Ordini recenti</h3><table class="admin__table"><thead><tr><th>Data</th><th>Cliente</th><th>Totale</th><th>Stato</th></tr></thead><tbody>${recentOrders}</tbody></table></div>
+          <div class="admin__table-card"><h3>Prodotti più venduti</h3><table class="admin__table"><thead><tr><th>Prodotto</th><th>Unità</th></tr></thead><tbody>${topProducts}</tbody></table></div>`;
+      }).catch(() => {
+        const s = document.getElementById('salesSummary');
+        if (s) s.innerHTML = `<p class="msg">Non riesco a caricare i dati. Riprova tra poco.</p>`;
+      });
   }
 
   function renderChart(orders) {
@@ -303,40 +343,87 @@
     });
   }
 
-  function renderTables(orders, returns, events) {
-    const el = document.getElementById('tables');
-    if (!el) return;
+  /* ----- Resi ----- */
+  function renderReturnsSection() {
+    app.innerHTML = `
+      <div class="section-summary" id="returnsSummary"><p class="msg">Carico i dati…</p></div>
+      <div class="section-detail">
+        <span class="section-detail__hint">Dettaglio</span>
+        <div class="admin__tables" id="returnsTables"></div>
+      </div>`;
 
-    const recentOrders = orders.slice(0, 20).map((o) => `
-      <tr><td>${new Date(o.created_at).toLocaleDateString('it-IT')}</td><td>${o.email || '—'}</td><td>${euro(o.total)}</td><td>${o.status || '—'}</td></tr>
-    `).join('') || '<tr><td colspan="4">Nessun ordine nel periodo</td></tr>';
+    supa.from('returns').select('status').then(({ data, error }) => {
+      if (error) throw error;
+      const returns = data || [];
+      const openReturns = returns.filter((r) => r.status === 'richiesto').length;
 
-    const productTotals = {};
-    orders.forEach((o) => (o.order_items || []).forEach((it) => { productTotals[it.name] = (productTotals[it.name] || 0) + it.qty; }));
-    const topProducts = Object.entries(productTotals).sort((a, b) => b[1] - a[1]).slice(0, 8)
-      .map(([name, qty]) => `<tr><td>${name}</td><td>${qty}</td></tr>`).join('') || '<tr><td colspan="2">Nessun dato nel periodo</td></tr>';
+      document.getElementById('returnsSummary').innerHTML = `
+        <div class="section-summary__stat"><span class="section-summary__label">Resi aperti</span><span class="section-summary__value">${openReturns}</span></div>
+        <div class="section-summary__stat"><span class="section-summary__label">Totale resi</span><span class="section-summary__value">${returns.length}</span></div>`;
 
-    const returnStatus = {};
-    returns.forEach((r) => (returnStatus[r.status] = (returnStatus[r.status] || 0) + 1));
-    const returnsByStatus = Object.entries(returnStatus).map(([status, n]) => `<tr><td>${status}</td><td>${n}</td></tr>`).join('') || '<tr><td colspan="2">Nessun reso</td></tr>';
+      const returnStatus = {};
+      returns.forEach((r) => (returnStatus[r.status] = (returnStatus[r.status] || 0) + 1));
+      const returnsByStatus = Object.entries(returnStatus).map(([status, n]) => `<tr><td>${status}</td><td>${n}</td></tr>`).join('') || '<tr><td colspan="2">Nessun reso</td></tr>';
 
-    const pageCounts = {};
-    const productClickCounts = {};
-    events.forEach((e) => {
-      if (e.type === 'page_view' && e.page) pageCounts[e.page] = (pageCounts[e.page] || 0) + 1;
-      if (e.type === 'product_view' && e.product_name) productClickCounts[e.product_name] = (productClickCounts[e.product_name] || 0) + 1;
+      document.getElementById('returnsTables').innerHTML = `
+        <div class="admin__table-card"><h3>Resi per stato</h3><table class="admin__table"><thead><tr><th>Stato</th><th>Conteggio</th></tr></thead><tbody>${returnsByStatus}</tbody></table></div>`;
+    }).catch(() => {
+      const s = document.getElementById('returnsSummary');
+      if (s) s.innerHTML = `<p class="msg">Non riesco a caricare i dati. Riprova tra poco.</p>`;
     });
-    const topPages = Object.entries(pageCounts).sort((a, b) => b[1] - a[1]).slice(0, 8)
-      .map(([page, n]) => `<tr><td>${page}</td><td>${n}</td></tr>`).join('') || '<tr><td colspan="2">Nessun dato</td></tr>';
-    const topProductClicks = Object.entries(productClickCounts).sort((a, b) => b[1] - a[1]).slice(0, 8)
-      .map(([name, n]) => `<tr><td>${name}</td><td>${n}</td></tr>`).join('') || '<tr><td colspan="2">Nessun dato</td></tr>';
+  }
 
-    el.innerHTML = `
-      <div class="admin__table-card"><h3>Ordini recenti</h3><table class="admin__table"><thead><tr><th>Data</th><th>Cliente</th><th>Totale</th><th>Stato</th></tr></thead><tbody>${recentOrders}</tbody></table></div>
-      <div class="admin__table-card"><h3>Prodotti più venduti</h3><table class="admin__table"><thead><tr><th>Prodotto</th><th>Unità</th></tr></thead><tbody>${topProducts}</tbody></table></div>
-      <div class="admin__table-card"><h3>Resi per stato</h3><table class="admin__table"><thead><tr><th>Stato</th><th>Conteggio</th></tr></thead><tbody>${returnsByStatus}</tbody></table></div>
-      <div class="admin__table-card"><h3>Pagine più viste</h3><table class="admin__table"><thead><tr><th>Pagina</th><th>Visite</th></tr></thead><tbody>${topPages}</tbody></table></div>
-      <div class="admin__table-card"><h3>Prodotti più cliccati</h3><table class="admin__table"><thead><tr><th>Prodotto</th><th>Click</th></tr></thead><tbody>${topProductClicks}</tbody></table></div>`;
+  /* ----- Traffico ----- */
+  function renderTrafficSection() {
+    const cutoff = new Date(Date.now() - PERIODS[currentPeriod].days * 86400000).toISOString();
+    app.innerHTML = `
+      ${periodPillsHtml()}
+      <div class="section-summary" id="trafficSummary"><p class="msg">Carico i dati…</p></div>
+      <div class="section-detail">
+        <span class="section-detail__hint">Dettaglio</span>
+        <div class="admin__tables" id="trafficTables"></div>
+      </div>`;
+    wirePeriodPills(renderTrafficSection);
+
+    supa.from('events').select('type, page, product_name').gte('created_at', cutoff).then(({ data, error }) => {
+      if (error) throw error;
+      const events = data || [];
+      const visits = events.filter((e) => e.type === 'page_view').length;
+      const productViews = events.filter((e) => e.type === 'product_view').length;
+
+      document.getElementById('trafficSummary').innerHTML = `
+        <div class="section-summary__stat"><span class="section-summary__label">Visite</span><span class="section-summary__value">${visits}</span></div>
+        <div class="section-summary__stat"><span class="section-summary__label">Prodotti visti</span><span class="section-summary__value">${productViews}</span></div>`;
+
+      const pageCounts = {};
+      const productClickCounts = {};
+      events.forEach((e) => {
+        if (e.type === 'page_view' && e.page) pageCounts[e.page] = (pageCounts[e.page] || 0) + 1;
+        if (e.type === 'product_view' && e.product_name) productClickCounts[e.product_name] = (productClickCounts[e.product_name] || 0) + 1;
+      });
+      const topPages = Object.entries(pageCounts).sort((a, b) => b[1] - a[1]).slice(0, 8)
+        .map(([page, n]) => `<tr><td>${page}</td><td>${n}</td></tr>`).join('') || '<tr><td colspan="2">Nessun dato</td></tr>';
+      const topProductClicks = Object.entries(productClickCounts).sort((a, b) => b[1] - a[1]).slice(0, 8)
+        .map(([name, n]) => `<tr><td>${name}</td><td>${n}</td></tr>`).join('') || '<tr><td colspan="2">Nessun dato</td></tr>';
+
+      document.getElementById('trafficTables').innerHTML = `
+        <div class="admin__table-card"><h3>Pagine più viste</h3><table class="admin__table"><thead><tr><th>Pagina</th><th>Visite</th></tr></thead><tbody>${topPages}</tbody></table></div>
+        <div class="admin__table-card"><h3>Prodotti più cliccati</h3><table class="admin__table"><thead><tr><th>Prodotto</th><th>Click</th></tr></thead><tbody>${topProductClicks}</tbody></table></div>`;
+    }).catch(() => {
+      const s = document.getElementById('trafficSummary');
+      if (s) s.innerHTML = `<p class="msg">Non riesco a caricare i dati. Riprova tra poco.</p>`;
+    });
+  }
+
+  /* ----- Impostazioni ----- */
+  function renderSettingsSection() {
+    app.innerHTML = `
+      <div class="login-card" style="margin:0">
+        <h1>Impostazioni</h1>
+        <p class="msg">Il codice a 6 cifre sblocca la dashboard solo su questo dispositivo.</p>
+        <button class="pill pill--ghost" id="changePinBtn">Cambia codice →</button>
+      </div>`;
+    document.getElementById('changePinBtn').addEventListener('click', () => renderPinSetup());
   }
 
   /* ---------- AUTH FLOW ---------- */
@@ -355,7 +442,7 @@
     const pinHash = localStorage.getItem(PIN_HASH_KEY);
     if (!pinHash) { renderPinSetup(); return; }
     if (sessionStorage.getItem(PIN_UNLOCK_KEY) !== '1') { renderPinLock(); return; }
-    renderDashboard('week');
+    renderDashboard();
   }
 
   supa.auth.onAuthStateChange((event, session) => {
