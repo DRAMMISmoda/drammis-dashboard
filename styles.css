@@ -86,3 +86,23 @@ main{padding:clamp(20px,4vw,40px);max-width:1080px;margin:0 auto}
 .admin__table tr:last-child td{border-bottom:none}
 
 @media(max-width:600px){.admin__tiles{grid-template-columns:repeat(2,1fr)}}
+
+.email-list{display:flex;flex-direction:column;gap:.6rem}
+.email-item{
+  display:flex;flex-direction:column;gap:.2rem;text-align:left;padding:1rem 1.2rem;border-radius:14px;
+  border:1px solid var(--line);background:var(--card);color:var(--fg);font-family:inherit;cursor:pointer;
+}
+.email-item--unread{border-color:var(--fg)}
+.email-item__from{font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.email-item__subject{font-weight:600}
+.email-item__snippet{font-size:.82rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.email-body{margin-top:1rem;line-height:1.6;font-size:.92rem;white-space:pre-wrap}
+
+.email-chat-log{display:flex;flex-direction:column;gap:.6rem;max-height:320px;overflow-y:auto}
+.email-chat-msg{padding:.7rem 1rem;border-radius:14px;font-size:.9rem;line-height:1.5;max-width:85%}
+.email-chat-msg--user{align-self:flex-end;background:var(--fg);color:var(--bg)}
+.email-chat-msg--ai{align-self:flex-start;background:var(--card);border:1px solid var(--line)}
+
+.supplier-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.6rem 0;border-bottom:1px solid var(--line);font-size:.88rem}
+.supplier-row:last-child{border-bottom:none}

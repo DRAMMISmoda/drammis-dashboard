@@ -9,6 +9,27 @@
   const app = document.getElementById('app');
   const logoutBtn = document.getElementById('logoutBtn');
   const euro = (n) => '€' + Math.round(n || 0).toLocaleString('it-IT');
+  const escapeHtml = (str) => { const d = document.createElement('div'); d.textContent = str || ''; return d.innerHTML; };
+
+  /* ---------- POSTA (Gmail) ---------- */
+  const GOOGLE_CLIENT_ID = '942982110982-r7bdn2uei5a0lv794p418190m7mk7i5b.apps.googleusercontent.com';
+  const GMAIL_REDIRECT_URI = 'https://lyflfedxiosvayxjttzt.supabase.co/functions/v1/gmail-oauth-callback';
+  const GMAIL_PROXY_URL = 'https://lyflfedxiosvayxjttzt.supabase.co/functions/v1/gmail-proxy';
+  let currentEmailCategory = 'clienti';
+  let emailsCache = [];
+  let currentEmailDetail = null;
+  let emailChatHistory = [];
+  let gmailReturnStatus = null;
+
+  async function gmailCall(action, extra) {
+    const { data: { session } } = await supa.auth.getSession();
+    const res = await fetch(GMAIL_PROXY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+      body: JSON.stringify({ action, ...(extra || {}) }),
+    });
+    return res.json();
+  }
 
   /* ---------- CODICE DI SICUREZZA (PIN a 6 cifre) ----------
      La vera sicurezza resta la sessione Supabase (email+password);
@@ -236,6 +257,7 @@
     vendite: 'Vendite',
     resi: 'Resi',
     traffico: 'Traffico',
+    posta: 'Posta',
   };
   let chart = null;
   let currentSection = 'riepilogo';
@@ -280,6 +302,7 @@
     if (currentSection === 'resi') renderReturnsSection();
     else if (currentSection === 'traffico') renderTrafficSection();
     else if (currentSection === 'riepilogo') renderRiepilogoSection();
+    else if (currentSection === 'posta') renderPostaSection();
     else renderSalesSection();
   }
 
@@ -469,6 +492,250 @@
   }
 
 
+  /* ----- Posta (Gmail) ----- */
+  function renderPostaSection() {
+    app.innerHTML = `<p class="msg">Verifico il collegamento con Gmail…</p>`;
+    gmailCall('status').then((res) => {
+      if (res.connected) renderPostaInbox(res.email);
+      else renderPostaConnect();
+    }).catch(() => {
+      app.innerHTML = `<p class="msg">Non riesco a controllare lo stato della posta. Riprova tra poco.</p>`;
+    });
+  }
+
+  function renderPostaConnect() {
+    const errorMsg = gmailReturnStatus === 'error'
+      ? `<p class="msg" style="color:#e08a8a">Il collegamento con Gmail non è andato a buon fine. Riprova.</p>` : '';
+    gmailReturnStatus = null;
+    app.innerHTML = `
+      <div class="login-card" style="margin:0">
+        <h1>Collega la posta</h1>
+        ${errorMsg}
+        <p class="msg">Collega la casella email del negozio per leggere e rispondere ai messaggi da qui, con l'aiuto dell'AI. Non viene inviato nulla senza la tua conferma.</p>
+        <button class="pill pill--dark" id="connectGmailBtn">Collega Gmail →</button>
+      </div>`;
+    document.getElementById('connectGmailBtn').addEventListener('click', async () => {
+      const { data: { session } } = await supa.auth.getSession();
+      const params = new URLSearchParams({
+        client_id: GOOGLE_CLIENT_ID,
+        redirect_uri: GMAIL_REDIRECT_URI,
+        response_type: 'code',
+        access_type: 'offline',
+        prompt: 'consent',
+        scope: 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send',
+        state: session.user.id,
+      });
+      location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
+    });
+  }
+
+  function renderPostaInbox(connectedEmail) {
+    const connectedMsg = gmailReturnStatus === 'connected' ? `<p class="msg" style="color:#8ac48a">Gmail collegato con successo.</p>` : '';
+    gmailReturnStatus = null;
+    app.innerHTML = `
+      ${connectedMsg}
+      <div class="section-summary" id="postaSummary"><p class="msg">Carico le email…</p></div>
+      <div class="section-detail">
+        <span class="section-detail__hint">Posta di ${escapeHtml(connectedEmail || '')}</span>
+        <div class="admin__periods" id="postaTabs"></div>
+        <div id="postaList"></div>
+        <div id="supplierManager" style="margin-top:2rem"></div>
+      </div>`;
+
+    gmailCall('list').then((res) => {
+      if (res.error) { app.innerHTML = `<p class="msg">Non riesco a caricare le email. Riprova tra poco.</p>`; return; }
+      emailsCache = res.emails || [];
+      const counts = { clienti: 0, fornitori: 0, importanti: 0 };
+      emailsCache.forEach((e) => { counts[e.category] = (counts[e.category] || 0) + 1; });
+
+      document.getElementById('postaSummary').innerHTML = `
+        <div class="section-summary__stat"><span class="section-summary__label">Clienti</span><span class="section-summary__value">${counts.clienti}</span></div>
+        <div class="section-summary__stat"><span class="section-summary__label">Fornitori</span><span class="section-summary__value">${counts.fornitori}</span></div>
+        <div class="section-summary__stat"><span class="section-summary__label">Importanti</span><span class="section-summary__value">${counts.importanti}</span></div>`;
+
+      document.getElementById('postaTabs').innerHTML = ['clienti', 'fornitori', 'importanti'].map((cat) =>
+        `<button class="pill ${cat === currentEmailCategory ? 'pill--dark' : 'pill--ghost'}" data-cat="${cat}">${cat[0].toUpperCase() + cat.slice(1)} (${counts[cat] || 0})</button>`
+      ).join('');
+      document.querySelectorAll('#postaTabs [data-cat]').forEach((btn) => {
+        btn.addEventListener('click', () => { currentEmailCategory = btn.dataset.cat; renderPostaEmailList(); });
+      });
+
+      renderPostaEmailList();
+      renderSupplierManager(document.getElementById('supplierManager'));
+    }).catch(() => {
+      app.innerHTML = `<p class="msg">Non riesco a caricare le email. Riprova tra poco.</p>`;
+    });
+  }
+
+  function renderPostaEmailList() {
+    const listEl = document.getElementById('postaList');
+    if (!listEl) return;
+    document.querySelectorAll('#postaTabs [data-cat]').forEach((btn) => {
+      btn.classList.toggle('pill--dark', btn.dataset.cat === currentEmailCategory);
+      btn.classList.toggle('pill--ghost', btn.dataset.cat !== currentEmailCategory);
+    });
+    const filtered = emailsCache.filter((e) => e.category === currentEmailCategory);
+    listEl.innerHTML = filtered.length
+      ? `<div class="email-list">${filtered.map((e) => `
+          <button class="email-item${e.unread ? ' email-item--unread' : ''}" data-id="${e.id}">
+            <span class="email-item__from">${escapeHtml(e.from)}</span>
+            <span class="email-item__subject">${escapeHtml(e.subject || '(nessun oggetto)')}</span>
+            <span class="email-item__snippet">${escapeHtml(e.snippet || '')}</span>
+          </button>`).join('')}</div>`
+      : `<p class="msg">Nessuna email in questa categoria.</p>`;
+    listEl.querySelectorAll('[data-id]').forEach((btn) => {
+      btn.addEventListener('click', () => openEmailDetail(btn.dataset.id));
+    });
+  }
+
+  function openEmailDetail(id) {
+    app.innerHTML = `<p class="msg">Apro l'email…</p>`;
+    gmailCall('get', { id }).then((res) => {
+      if (res.error || !res.email) { app.innerHTML = `<p class="msg">Non riesco ad aprire l'email.</p>`; return; }
+      currentEmailDetail = res.email;
+      emailChatHistory = [];
+      renderEmailDetailView();
+    }).catch(() => { app.innerHTML = `<p class="msg">Non riesco ad aprire l'email.</p>`; });
+  }
+
+  function renderEmailDetailView() {
+    const e = currentEmailDetail;
+    app.innerHTML = `
+      <button class="pill pill--ghost" id="backToListBtn" style="margin-bottom:1rem">← Torna alla lista</button>
+      <div class="admin__table-card" style="margin-bottom:1.4rem">
+        <h3>${escapeHtml(e.subject || '(nessun oggetto)')}</h3>
+        <p class="msg">Da: ${escapeHtml(e.from)}<br>${escapeHtml(e.date)}</p>
+        <div class="email-body">${escapeHtml(e.body).replace(/\n/g, '<br>')}</div>
+      </div>
+
+      <div class="admin__table-card" style="margin-bottom:1.4rem">
+        <h3>Bozza di risposta (AI)</h3>
+        <p class="msg" id="draftStatus">Genero una proposta…</p>
+        <textarea id="draftReply" rows="8" style="width:100%;margin-top:.8rem;padding:.8rem;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--fg);font-family:inherit" placeholder="La bozza apparirà qui…"></textarea>
+        <div style="display:flex;gap:.6rem;margin-top:1rem;flex-wrap:wrap">
+          <button class="pill pill--ghost" id="regenDraftBtn">Rigenera con AI</button>
+          <button class="pill pill--dark" id="confirmSendBtn">Rivedi e invia →</button>
+        </div>
+      </div>
+
+      <div class="admin__table-card">
+        <h3>Parlane con l'AI</h3>
+        <div id="emailChatLog" class="email-chat-log"></div>
+        <form id="emailChatForm" style="display:flex;gap:.6rem;margin-top:.8rem">
+          <input type="text" id="emailChatInput" placeholder="Es: rendila più breve" style="flex:1;padding:.8rem 1rem;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--fg);font-family:inherit">
+          <button class="pill pill--dark" type="submit">Invia</button>
+        </form>
+      </div>`;
+
+    document.getElementById('backToListBtn').addEventListener('click', () => { currentEmailDetail = null; renderPostaSection(); });
+    document.getElementById('regenDraftBtn').addEventListener('click', () => generateDraft());
+    document.getElementById('confirmSendBtn').addEventListener('click', () => confirmAndSend());
+    document.getElementById('emailChatForm').addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      const input = document.getElementById('emailChatInput');
+      const msg = input.value.trim();
+      if (!msg) return;
+      input.value = '';
+      sendChatMessage(msg);
+    });
+
+    generateDraft();
+  }
+
+  function generateDraft() {
+    const statusEl = document.getElementById('draftStatus');
+    const textarea = document.getElementById('draftReply');
+    if (statusEl) { statusEl.hidden = false; statusEl.textContent = 'Genero una proposta…'; }
+    gmailCall('propose_reply', { emailContext: { from: currentEmailDetail.from, subject: currentEmailDetail.subject, body: currentEmailDetail.body } })
+      .then((res) => {
+        if (statusEl) statusEl.hidden = true;
+        if (textarea) textarea.value = res.reply || '';
+        emailChatHistory = [
+          { role: 'user', content: 'Proponi una bozza di risposta a questa email.' },
+          { role: 'assistant', content: res.reply || '' },
+        ];
+      })
+      .catch(() => { if (statusEl) { statusEl.hidden = false; statusEl.textContent = 'Non riesco a generare una proposta. Riprova.'; } });
+  }
+
+  function sendChatMessage(message) {
+    const log = document.getElementById('emailChatLog');
+    if (log) log.innerHTML += `<div class="email-chat-msg email-chat-msg--user">${escapeHtml(message)}</div>`;
+    const historyBefore = emailChatHistory.slice();
+    emailChatHistory.push({ role: 'user', content: message });
+
+    gmailCall('chat', { emailContext: { from: currentEmailDetail.from, subject: currentEmailDetail.subject, body: currentEmailDetail.body }, history: historyBefore, message })
+      .then((res) => {
+        emailChatHistory.push({ role: 'assistant', content: res.reply || '' });
+        if (log) log.innerHTML += `<div class="email-chat-msg email-chat-msg--ai">${escapeHtml(res.reply || '')}</div>`;
+        const textarea = document.getElementById('draftReply');
+        if (textarea && res.reply) textarea.value = res.reply;
+      });
+  }
+
+  function confirmAndSend() {
+    const textarea = document.getElementById('draftReply');
+    const text = textarea ? textarea.value.trim() : '';
+    if (!text) { alert('Scrivi o genera prima una risposta.'); return; }
+    if (!confirm(`Invio questa risposta a ${currentEmailDetail.from}?\n\n${text}`)) return;
+
+    const btn = document.getElementById('confirmSendBtn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Invio…'; }
+
+    const fromMatch = currentEmailDetail.from.match(/<([^>]+)>/);
+    const toEmail = fromMatch ? fromMatch[1] : currentEmailDetail.from;
+
+    gmailCall('send', {
+      threadId: currentEmailDetail.threadId,
+      toEmail,
+      subject: currentEmailDetail.subject,
+      text,
+      messageIdHeader: currentEmailDetail.messageIdHeader,
+    }).then((res) => {
+      if (res.ok) {
+        alert('Email inviata.');
+        currentEmailDetail = null;
+        renderPostaSection();
+      } else {
+        alert('Errore durante l\'invio: ' + (res.error || 'sconosciuto'));
+        if (btn) { btn.disabled = false; btn.textContent = 'Rivedi e invia →'; }
+      }
+    }).catch(() => {
+      alert('Errore durante l\'invio.');
+      if (btn) { btn.disabled = false; btn.textContent = 'Rivedi e invia →'; }
+    });
+  }
+
+  function renderSupplierManager(container) {
+    if (!container) return;
+    container.innerHTML = `<p class="msg">Carico fornitori…</p>`;
+    supa.from('known_suppliers').select('id, email, name').order('created_at', { ascending: false }).then(({ data }) => {
+      const suppliers = data || [];
+      container.innerHTML = `
+        <div class="admin__table-card">
+          <h3>Fornitori riconosciuti</h3>
+          <p class="msg">Le email di questi indirizzi finiscono nella categoria "Fornitori" invece che "Importanti".</p>
+          <div id="supplierList">${suppliers.map((s) => `<div class="supplier-row"><span>${escapeHtml(s.email)}</span><button class="pill pill--ghost" data-remove="${s.id}">Rimuovi</button></div>`).join('') || '<p class="msg">Nessun fornitore aggiunto.</p>'}</div>
+          <form id="addSupplierForm" style="display:flex;gap:.6rem;margin-top:1rem">
+            <input type="email" id="newSupplierEmail" placeholder="email@fornitore.com" required style="flex:1;padding:.7rem 1rem;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--fg);font-family:inherit">
+            <button class="pill pill--dark" type="submit">Aggiungi</button>
+          </form>
+        </div>`;
+      container.querySelectorAll('[data-remove]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          supa.from('known_suppliers').delete().eq('id', btn.dataset.remove).then(() => renderSupplierManager(container));
+        });
+      });
+      document.getElementById('addSupplierForm').addEventListener('submit', (ev) => {
+        ev.preventDefault();
+        const input = document.getElementById('newSupplierEmail');
+        const email = input.value.trim().toLowerCase();
+        if (!email) return;
+        supa.from('known_suppliers').insert({ email }).then(() => renderSupplierManager(container));
+      });
+    });
+  }
+
   /* ---------- AUTH FLOW ---------- */
   function isRecoveryLink() {
     return location.hash.includes('type=recovery') || location.search.includes('type=recovery');
@@ -485,6 +752,13 @@
     const pinHash = localStorage.getItem(PIN_HASH_KEY);
     if (!pinHash) { renderPinSetup(); return; }
     if (sessionStorage.getItem(PIN_UNLOCK_KEY) !== '1') { renderPinLock(); return; }
+
+    const gmailParam = new URLSearchParams(location.search).get('gmail');
+    if (gmailParam) {
+      gmailReturnStatus = gmailParam;
+      currentSection = 'posta';
+      history.replaceState(null, '', location.pathname);
+    }
     renderDashboard();
   }
 
