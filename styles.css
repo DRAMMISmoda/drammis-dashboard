@@ -25,6 +25,10 @@ body{
   border-right:1px solid var(--line);z-index:21;display:flex;flex-direction:column;
   padding:clamp(70px,12vh,90px) 1rem 1rem;gap:.4rem;
 }
+.menu-drawer__close{
+  position:absolute;top:1rem;right:1rem;background:none;border:1px solid var(--line);border-radius:10px;
+  color:var(--fg);font-size:1rem;line-height:1;width:2.2rem;height:2.2rem;cursor:pointer;
+}
 .menu-drawer__item{
   background:none;border:none;color:var(--fg);text-align:left;padding:.9rem 1rem;border-radius:12px;
   font-family:inherit;font-size:1rem;font-weight:600;cursor:pointer;

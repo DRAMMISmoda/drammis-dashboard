@@ -249,6 +249,7 @@
   function closeMenu() { menuOverlay.hidden = true; menuDrawer.hidden = true; }
   menuBtn.addEventListener('click', openMenu);
   menuOverlay.addEventListener('click', closeMenu);
+  document.getElementById('menuCloseBtn').addEventListener('click', closeMenu);
   menuDrawer.querySelectorAll('[data-section]').forEach((btn) => {
     btn.addEventListener('click', () => {
       currentSection = btn.dataset.section;
