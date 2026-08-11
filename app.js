@@ -35,6 +35,7 @@
   let currentThreadDetail = null;
   let emailChatHistory = [];
   let gmailReturnStatus = null;
+  let postaConnectedEmail = null;
 
   async function gmailCall(action, extra) {
     let { data: { session } } = await supa.auth.getSession();
@@ -571,11 +572,9 @@
     });
   }
 
-  function renderPostaInbox(connectedEmail) {
-    const connectedMsg = gmailReturnStatus === 'connected' ? `<p class="msg" style="color:#8ac48a">Gmail collegato con successo.</p>` : '';
-    gmailReturnStatus = null;
+  function renderPostaInboxShell(connectedEmail, banner) {
     app.innerHTML = `
-      ${connectedMsg}
+      ${banner || ''}
       <div class="section-summary" id="postaSummary"><p class="msg">Carico le email…</p></div>
       <div class="section-detail">
         <span class="section-detail__hint">Posta di ${escapeHtml(connectedEmail || '')}</span>
@@ -584,6 +583,13 @@
         <div class="admin__periods" id="postaReplyTabs"></div>
         <div id="postaList"></div>
       </div>`;
+  }
+
+  function renderPostaInbox(connectedEmail) {
+    postaConnectedEmail = connectedEmail;
+    const connectedMsg = gmailReturnStatus === 'connected' ? `<p class="msg" style="color:#8ac48a">Gmail collegato con successo.</p>` : '';
+    gmailReturnStatus = null;
+    renderPostaInboxShell(connectedEmail, connectedMsg);
 
     gmailCall('list').then((res) => {
       if (res.error) { app.innerHTML = `<p class="msg">Non riesco a caricare le email. Riprova tra poco.</p>`; return; }
@@ -593,6 +599,17 @@
     }).catch(() => {
       app.innerHTML = `<p class="msg">Non riesco a caricare le email. Riprova tra poco.</p>`;
     });
+  }
+
+  function returnToPostaList() {
+    currentThreadDetail = null;
+    if (threadsCache.length) {
+      renderPostaInboxShell(postaConnectedEmail, '');
+      renderPostaControls();
+      renderPostaEmailList();
+    } else {
+      renderPostaSection();
+    }
   }
 
   function renderPostaControls() {
@@ -702,7 +719,7 @@
     const currentCategory = found ? found.category : 'importanti';
 
     app.innerHTML = `
-      <button class="pill pill--ghost" id="backToListBtn" style="margin-bottom:1rem">← Torna alla lista</button>
+      <button class="pill pill--ghost thread-back-btn" id="backToListBtn">← Torna alla lista</button>
 
       <div class="admin__table-card" style="margin-bottom:1rem">
         <h3>${escapeHtml(t.subject || '(nessun oggetto)')}</h3>
@@ -741,7 +758,7 @@
         </form>
       </div>`;
 
-    document.getElementById('backToListBtn').addEventListener('click', () => { currentThreadDetail = null; renderPostaSection(); });
+    document.getElementById('backToListBtn').addEventListener('click', () => returnToPostaList());
     document.getElementById('categoryPicker').addEventListener('change', (ev) => {
       gmailCall('set_category', { email: t.otherEmail, category: ev.target.value }).then(() => {
         const idx = threadsCache.findIndex((x) => x.id === t.threadId);

@@ -89,6 +89,8 @@ main{padding:clamp(20px,4vw,40px);max-width:1080px;margin:0 auto}
 
 .pill--sm{padding:.5rem 1rem;font-size:.74rem}
 
+.thread-back-btn{position:sticky;top:64px;z-index:5;margin-bottom:1rem;background:var(--bg)}
+
 .email-date-group{margin-bottom:1.6rem}
 .email-date-group__label{font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:.6rem}
 
