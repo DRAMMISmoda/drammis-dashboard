@@ -132,7 +132,7 @@ async function listEmails(accessToken: string) {
   // esclude social/pubblicità/notifiche automatiche usando la classificazione che Gmail fa già da solo,
   // così restano solo email vere (persone che scrivono davvero) da smistare in clienti/fornitori/importanti
   const query = "in:inbox -category:social -category:promotions -category:updates -category:forums";
-  const list = await gmailFetch(accessToken, `/messages?maxResults=30&q=${encodeURIComponent(query)}`);
+  const list = await gmailFetch(accessToken, `/messages?maxResults=20&q=${encodeURIComponent(query)}`);
   const ids = (list.messages || []).map((m: any) => m.id);
   const details = await Promise.all(
     ids.map((id: string) =>
