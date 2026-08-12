@@ -62,7 +62,7 @@ serve(async (req) => {
     // non blocca il collegamento se il profilo non si legge
   }
 
-  await supabase.from("tiktok_tokens").upsert({
+  const { error: saveError } = await supabase.from("tiktok_tokens").upsert({
     user_id: state,
     access_token: tokenData.access_token,
     refresh_token: tokenData.refresh_token,
@@ -72,6 +72,11 @@ serve(async (req) => {
     avatar_url: avatarUrl,
     updated_at: new Date().toISOString(),
   });
+
+  if (saveError) {
+    console.error("tiktok_tokens save failed", saveError);
+    return Response.redirect(`${DASHBOARD_URL}/?tiktok=error`, 302);
+  }
 
   return Response.redirect(`${DASHBOARD_URL}/?tiktok=connected`, 302);
 });
