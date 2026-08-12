@@ -78,7 +78,7 @@
   const TIKTOK_CLIENT_KEY = 'sbaw9jo9nuke7ijzlt';
   const TIKTOK_REDIRECT_URI = 'https://lyflfedxiosvayxjttzt.supabase.co/functions/v1/tiktok-oauth-callback';
   const TIKTOK_PROXY_URL = 'https://lyflfedxiosvayxjttzt.supabase.co/functions/v1/tiktok-proxy';
-  const INSTAGRAM_APP_ID = '357911855965090';
+  const INSTAGRAM_APP_ID = '1357911855965090';
   const INSTAGRAM_REDIRECT_URI = 'https://lyflfedxiosvayxjttzt.supabase.co/functions/v1/instagram-oauth-callback';
   const INSTAGRAM_PROXY_URL = 'https://lyflfedxiosvayxjttzt.supabase.co/functions/v1/instagram-proxy';
   let tiktokReturnStatus = null;
