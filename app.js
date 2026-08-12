@@ -996,7 +996,7 @@
         client_id: INSTAGRAM_APP_ID,
         redirect_uri: INSTAGRAM_REDIRECT_URI,
         response_type: 'code',
-        scope: 'instagram_basic,instagram_manage_insights,pages_show_list,pages_read_engagement,business_management',
+        config_id: '1040398798628760',
         state: session.user.id,
       });
       location.href = `https://www.facebook.com/v21.0/dialog/oauth?${params}`;
