@@ -303,6 +303,7 @@
     posta: 'Posta',
   };
   let chart = null;
+  let trafficChart = null;
   let currentSection = 'riepilogo';
   let currentPeriod = 'week';
   const menuBtn = document.getElementById('menuBtn');
@@ -446,6 +447,17 @@
       });
   }
 
+  function chartDarkOptions() {
+    return {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { beginAtZero: true, ticks: { precision: 0, color: 'rgba(250,250,245,.65)' }, grid: { color: 'rgba(255,255,255,.08)' } },
+        x: { ticks: { color: 'rgba(250,250,245,.65)' }, grid: { color: 'rgba(255,255,255,.08)' } },
+      },
+    };
+  }
+
   function renderChart(orders) {
     const canvas = document.getElementById('chart');
     if (!canvas || !window.Chart) return;
@@ -457,8 +469,8 @@
     if (chart) { chart.destroy(); chart = null; }
     chart = new Chart(canvas.getContext('2d'), {
       type: 'bar',
-      data: { labels: Object.keys(byDay), datasets: [{ label: 'Ordini', data: Object.values(byDay), backgroundColor: '#141414' }] },
-      options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } },
+      data: { labels: Object.keys(byDay), datasets: [{ label: 'Ordini', data: Object.values(byDay), backgroundColor: '#FAFAF5' }] },
+      options: chartDarkOptions(),
     });
   }
 
@@ -500,11 +512,12 @@
       <div class="section-summary" id="trafficSummary"><p class="msg">Carico i dati…</p></div>
       <div class="section-detail">
         <span class="section-detail__hint">Dettaglio</span>
+        <div class="admin__chart-wrap"><canvas id="trafficChartCanvas" height="90"></canvas></div>
         <div class="admin__tables" id="trafficTables"></div>
       </div>`;
     wirePeriodPills(renderTrafficSection);
 
-    supa.from('events').select('type, page, product_name').gte('created_at', cutoff).then(({ data, error }) => {
+    supa.from('events').select('type, page, product_name, created_at').gte('created_at', cutoff).then(({ data, error }) => {
       if (error) throw error;
       const events = data || [];
       const visits = events.filter((e) => e.type === 'page_view').length;
@@ -513,6 +526,8 @@
       document.getElementById('trafficSummary').innerHTML = `
         <div class="section-summary__stat"><span class="section-summary__label">Visite</span><span class="section-summary__value">${visits}</span></div>
         <div class="section-summary__stat"><span class="section-summary__label">Prodotti visti</span><span class="section-summary__value">${productViews}</span></div>`;
+
+      renderTrafficChart(events);
 
       const pageCounts = {};
       const productClickCounts = {};
@@ -531,6 +546,22 @@
     }).catch(() => {
       const s = document.getElementById('trafficSummary');
       if (s) s.innerHTML = `<p class="msg">Non riesco a caricare i dati. Riprova tra poco.</p>`;
+    });
+  }
+
+  function renderTrafficChart(events) {
+    const canvas = document.getElementById('trafficChartCanvas');
+    if (!canvas || !window.Chart) return;
+    const byDay = {};
+    events.filter((e) => e.type === 'page_view').forEach((e) => {
+      const day = new Date(e.created_at).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' });
+      byDay[day] = (byDay[day] || 0) + 1;
+    });
+    if (trafficChart) { trafficChart.destroy(); trafficChart = null; }
+    trafficChart = new Chart(canvas.getContext('2d'), {
+      type: 'bar',
+      data: { labels: Object.keys(byDay), datasets: [{ label: 'Visite', data: Object.values(byDay), backgroundColor: '#FAFAF5' }] },
+      options: chartDarkOptions(),
     });
   }
 
