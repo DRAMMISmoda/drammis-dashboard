@@ -74,11 +74,20 @@
     return thread.messages.map((m) => `${m.isMe ? 'Tu' : 'Loro'} (${m.date}):\n${m.body}`).join('\n\n---\n\n');
   }
 
-  /* ---------- SOCIAL (TikTok) ---------- */
+  /* ---------- SOCIAL (TikTok + Instagram) ---------- */
   const TIKTOK_CLIENT_KEY = 'sbaw9jo9nuke7ijzlt';
   const TIKTOK_REDIRECT_URI = 'https://lyflfedxiosvayxjttzt.supabase.co/functions/v1/tiktok-oauth-callback';
   const TIKTOK_PROXY_URL = 'https://lyflfedxiosvayxjttzt.supabase.co/functions/v1/tiktok-proxy';
+  const INSTAGRAM_APP_ID = '357911855965090';
+  const INSTAGRAM_REDIRECT_URI = 'https://lyflfedxiosvayxjttzt.supabase.co/functions/v1/instagram-oauth-callback';
+  const INSTAGRAM_PROXY_URL = 'https://lyflfedxiosvayxjttzt.supabase.co/functions/v1/instagram-proxy';
   let tiktokReturnStatus = null;
+  let instagramReturnStatus = null;
+  let currentSocialPlatform = 'tiktok';
+  let instagramMediaCache = [];
+  let instagramGrowthChart = null;
+  let instagramMediaChart = null;
+  let mediaDetailChart = null;
 
   async function apiCall(url, action, extra) {
     let { data: { session } } = await supa.auth.getSession();
@@ -102,6 +111,18 @@
   }
 
   const tiktokCall = (action, extra) => apiCall(TIKTOK_PROXY_URL, action, extra);
+  const instagramCall = (action, extra) => apiCall(INSTAGRAM_PROXY_URL, action, extra);
+
+  function socialPlatformTabsHtml() {
+    return `<div class="admin__periods" id="socialPlatformTabs">${[['tiktok', 'TikTok'], ['instagram', 'Instagram']].map(([key, label]) =>
+      `<button class="pill ${key === currentSocialPlatform ? 'pill--dark' : 'pill--ghost'}" data-platform="${key}">${label}</button>`
+    ).join('')}</div>`;
+  }
+  function wireSocialPlatformTabs() {
+    document.querySelectorAll('#socialPlatformTabs [data-platform]').forEach((btn) => {
+      btn.addEventListener('click', () => { currentSocialPlatform = btn.dataset.platform; renderSocialSection(); });
+    });
+  }
 
   function numFmt(n) {
     return (n || 0).toLocaleString('it-IT');
@@ -915,12 +936,18 @@
 
   /* ----- Social ----- */
   function renderSocialSection() {
-    app.innerHTML = `<p class="msg">Verifico il collegamento con TikTok…</p>`;
-    tiktokCall('status').then((res) => {
-      if (res.connected) renderSocialProfile();
-      else renderSocialConnect();
+    app.innerHTML = `${socialPlatformTabsHtml()}<p class="msg">Verifico il collegamento…</p>`;
+    wireSocialPlatformTabs();
+    const call = currentSocialPlatform === 'tiktok' ? tiktokCall : instagramCall;
+    call('status').then((res) => {
+      if (currentSocialPlatform === 'tiktok') {
+        if (res.connected) renderSocialProfile(); else renderSocialConnect();
+      } else {
+        if (res.connected) renderInstagramProfile(); else renderInstagramConnect();
+      }
     }).catch(() => {
-      app.innerHTML = `<p class="msg">Non riesco a controllare lo stato dei social. Riprova tra poco.</p>`;
+      app.innerHTML = `${socialPlatformTabsHtml()}<p class="msg">Non riesco a controllare lo stato dei social. Riprova tra poco.</p>`;
+      wireSocialPlatformTabs();
     });
   }
 
@@ -929,13 +956,14 @@
       ? `<p class="msg" style="color:#e08a8a">Il collegamento con TikTok non è andato a buon fine. Riprova.</p>` : '';
     tiktokReturnStatus = null;
     app.innerHTML = `
+      ${socialPlatformTabsHtml()}
       <div class="login-card" style="margin:0">
-        <h1>Collega i social</h1>
+        <h1>Collega TikTok</h1>
         ${errorMsg}
         <p class="msg">Collega TikTok per vedere qui follower, video e le loro statistiche (visualizzazioni, like, commenti, condivisioni).</p>
         <button class="pill pill--dark" id="connectTiktokBtn">Collega TikTok →</button>
-        <p class="msg" style="margin-top:1.2rem">Instagram/Facebook: in attesa (problema con l'SMS di verifica Meta, riproveremo più tardi).</p>
       </div>`;
+    wireSocialPlatformTabs();
     document.getElementById('connectTiktokBtn').addEventListener('click', async () => {
       const { data: { session } } = await supa.auth.getSession();
       const params = new URLSearchParams({
@@ -949,10 +977,37 @@
     });
   }
 
+  function renderInstagramConnect() {
+    const errorMsg = instagramReturnStatus === 'error'
+      ? `<p class="msg" style="color:#e08a8a">Il collegamento con Instagram non è andato a buon fine. Riprova.</p>` : '';
+    instagramReturnStatus = null;
+    app.innerHTML = `
+      ${socialPlatformTabsHtml()}
+      <div class="login-card" style="margin:0">
+        <h1>Collega Instagram</h1>
+        ${errorMsg}
+        <p class="msg">Collega l'account Instagram Business di DRAMMIS per vedere qui follower, post e le loro statistiche.</p>
+        <button class="pill pill--dark" id="connectInstagramBtn">Collega Instagram →</button>
+      </div>`;
+    wireSocialPlatformTabs();
+    document.getElementById('connectInstagramBtn').addEventListener('click', async () => {
+      const { data: { session } } = await supa.auth.getSession();
+      const params = new URLSearchParams({
+        client_id: INSTAGRAM_APP_ID,
+        redirect_uri: INSTAGRAM_REDIRECT_URI,
+        response_type: 'code',
+        scope: 'instagram_basic,instagram_manage_insights,pages_show_list,pages_read_engagement,business_management',
+        state: session.user.id,
+      });
+      location.href = `https://www.facebook.com/v21.0/dialog/oauth?${params}`;
+    });
+  }
+
   function renderSocialProfile() {
     const connectedMsg = tiktokReturnStatus === 'connected' ? `<p class="msg" style="color:#8ac48a">TikTok collegato con successo.</p>` : '';
     tiktokReturnStatus = null;
     app.innerHTML = `
+      ${socialPlatformTabsHtml()}
       ${connectedMsg}
       <div class="section-summary" id="socialSummary"><p class="msg">Carico i dati…</p></div>
       <div class="section-detail">
@@ -969,6 +1024,7 @@
         <span class="section-detail__hint">Video — clicca per il dettaglio</span>
         <div id="socialVideos"></div>
       </div>`;
+    wireSocialPlatformTabs();
 
     Promise.all([tiktokCall('profile'), tiktokCall('videos'), tiktokCall('snapshots')]).then(([profileRes, videosRes, snapRes]) => {
       if (profileRes.error || videosRes.error) { app.innerHTML = `<p class="msg">Non riesco a caricare i dati di TikTok. Riprova tra poco.</p>`; return; }
@@ -1078,6 +1134,131 @@
     }
   }
 
+  function renderInstagramProfile() {
+    const connectedMsg = instagramReturnStatus === 'connected' ? `<p class="msg" style="color:#8ac48a">Instagram collegato con successo.</p>` : '';
+    instagramReturnStatus = null;
+    app.innerHTML = `
+      ${socialPlatformTabsHtml()}
+      ${connectedMsg}
+      <div class="section-summary" id="socialSummary"><p class="msg">Carico i dati…</p></div>
+      <div class="section-detail">
+        <span class="section-detail__hint">Instagram — quadro generale</span>
+        <div class="admin__table-card" style="margin-bottom:1.4rem">
+          <h3>Andamento follower</h3>
+          <p class="msg" style="margin-bottom:.8rem">Si costruisce da oggi in poi — Instagram non fornisce lo storico passato.</p>
+          <canvas id="instagramGrowthCanvas" height="80"></canvas>
+        </div>
+        <div class="admin__table-card" style="margin-bottom:1.4rem">
+          <h3>Mi piace per post (in ordine di pubblicazione)</h3>
+          <canvas id="instagramMediaChartCanvas" height="90"></canvas>
+        </div>
+        <span class="section-detail__hint">Post — clicca per il dettaglio</span>
+        <div id="instagramMedia"></div>
+      </div>`;
+    wireSocialPlatformTabs();
+
+    Promise.all([instagramCall('profile'), instagramCall('media'), instagramCall('snapshots')]).then(([profileRes, mediaRes, snapRes]) => {
+      if (profileRes.error || mediaRes.error) { app.innerHTML = `<p class="msg">Non riesco a caricare i dati di Instagram. Riprova tra poco.</p>`; return; }
+      const p = profileRes.profile || {};
+      const media = (mediaRes.media || []).slice().sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+      instagramMediaCache = media;
+
+      document.getElementById('socialSummary').innerHTML = `
+        <div class="section-summary__stat"><span class="section-summary__label">Follower</span><span class="section-summary__value">${numFmt(p.followers_count)}</span></div>
+        <div class="section-summary__stat"><span class="section-summary__label">Seguiti</span><span class="section-summary__value">${numFmt(p.follows_count)}</span></div>
+        <div class="section-summary__stat"><span class="section-summary__label">Post</span><span class="section-summary__value">${numFmt(p.media_count)}</span></div>`;
+
+      renderInstagramGrowthChart(snapRes.snapshots || []);
+      renderInstagramMediaChart(media);
+
+      document.getElementById('instagramMedia').innerHTML = media.length
+        ? `<div class="video-list">${media.map((m) => `
+            <button class="video-item" data-media-id="${m.id}">
+              ${(m.thumbnail_url || m.media_url) ? `<img class="video-item__cover" src="${m.thumbnail_url || m.media_url}" alt="">` : ''}
+              <div class="video-item__body">
+                <span class="video-item__title">${escapeHtml((m.caption || '(senza didascalia)').slice(0, 80))}</span>
+                <div class="video-item__stats">
+                  <span>❤ ${numFmt(m.like_count)}</span>
+                  <span>💬 ${numFmt(m.comments_count)}</span>
+                  ${m.reach != null ? `<span>👁 ${numFmt(m.reach)}</span>` : ''}
+                </div>
+              </div>
+            </button>`).join('')}</div>`
+        : `<p class="msg">Nessun post trovato.</p>`;
+      document.querySelectorAll('#instagramMedia [data-media-id]').forEach((btn) => {
+        btn.addEventListener('click', () => openMediaDetail(btn.dataset.mediaId));
+      });
+    }).catch(() => {
+      app.innerHTML = `<p class="msg">Non riesco a caricare i dati di Instagram. Riprova tra poco.</p>`;
+    });
+  }
+
+  function renderInstagramGrowthChart(snapshots) {
+    const canvas = document.getElementById('instagramGrowthCanvas');
+    if (!canvas || !window.Chart) return;
+    const sorted = snapshots.slice().sort((a, b) => new Date(a.snapshot_date) - new Date(b.snapshot_date));
+    const labels = sorted.map((s) => new Date(s.snapshot_date).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' }));
+    const data = sorted.map((s) => s.follower_count);
+    if (instagramGrowthChart) { instagramGrowthChart.destroy(); instagramGrowthChart = null; }
+    instagramGrowthChart = new Chart(canvas.getContext('2d'), {
+      type: 'line',
+      data: { labels, datasets: [{ label: 'Follower', data, borderColor: '#FAFAF5', backgroundColor: 'rgba(250,250,245,.15)', fill: true, tension: .3 }] },
+      options: chartDarkOptions(),
+    });
+  }
+
+  function renderInstagramMediaChart(media) {
+    const canvas = document.getElementById('instagramMediaChartCanvas');
+    if (!canvas || !window.Chart) return;
+    const sorted = media.slice().sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    const labels = sorted.map((m) => m.timestamp ? new Date(m.timestamp).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' }) : '?');
+    const data = sorted.map((m) => m.like_count || 0);
+    if (instagramMediaChart) { instagramMediaChart.destroy(); instagramMediaChart = null; }
+    instagramMediaChart = new Chart(canvas.getContext('2d'), {
+      type: 'bar',
+      data: { labels, datasets: [{ label: 'Mi piace', data, backgroundColor: '#FAFAF5' }] },
+      options: chartDarkOptions(),
+    });
+  }
+
+  function openMediaDetail(id) {
+    const m = instagramMediaCache.find((x) => x.id === id);
+    if (!m) return;
+    renderMediaDetailView(m);
+  }
+
+  function renderMediaDetailView(m) {
+    app.innerHTML = `
+      <button class="pill pill--ghost thread-back-btn" id="backToSocialBtn">← Torna a Social</button>
+      <div class="admin__table-card" style="margin-bottom:1.4rem">
+        ${(m.thumbnail_url || m.media_url) ? `<img src="${m.thumbnail_url || m.media_url}" style="width:100%;max-width:260px;border-radius:12px;display:block;margin:0 auto 1rem">` : ''}
+        <h3>${escapeHtml(m.caption || '(senza didascalia)')}</h3>
+        <p class="msg">Pubblicato: ${m.timestamp ? new Date(m.timestamp).toLocaleDateString('it-IT') : '—'}</p>
+        ${m.permalink ? `<a class="pill pill--ghost" href="${m.permalink}" target="_blank" rel="noopener" style="display:inline-block;margin-top:.8rem;text-decoration:none">Apri su Instagram →</a>` : ''}
+      </div>
+      <div class="section-summary" style="margin-bottom:1.4rem">
+        <div class="section-summary__stat"><span class="section-summary__label">Mi piace</span><span class="section-summary__value">${numFmt(m.like_count)}</span></div>
+        <div class="section-summary__stat"><span class="section-summary__label">Commenti</span><span class="section-summary__value">${numFmt(m.comments_count)}</span></div>
+        ${m.reach != null ? `<div class="section-summary__stat"><span class="section-summary__label">Copertura</span><span class="section-summary__value">${numFmt(m.reach)}</span></div>` : ''}
+      </div>
+      <div class="admin__table-card">
+        <h3>Confronto interazioni</h3>
+        <canvas id="mediaDetailChartCanvas" height="90"></canvas>
+      </div>`;
+
+    document.getElementById('backToSocialBtn').addEventListener('click', () => renderInstagramProfile());
+
+    const canvas = document.getElementById('mediaDetailChartCanvas');
+    if (canvas && window.Chart) {
+      if (mediaDetailChart) { mediaDetailChart.destroy(); mediaDetailChart = null; }
+      mediaDetailChart = new Chart(canvas.getContext('2d'), {
+        type: 'bar',
+        data: { labels: ['Mi piace', 'Commenti'], datasets: [{ data: [m.like_count || 0, m.comments_count || 0], backgroundColor: '#FAFAF5' }] },
+        options: chartDarkOptions(),
+      });
+    }
+  }
+
   /* ---------- AUTH FLOW ---------- */
   function isRecoveryLink() {
     return location.hash.includes('type=recovery') || location.search.includes('type=recovery');
@@ -1098,6 +1279,7 @@
     const params = new URLSearchParams(location.search);
     const gmailParam = params.get('gmail');
     const tiktokParam = params.get('tiktok');
+    const instagramParam = params.get('instagram');
     if (gmailParam) {
       gmailReturnStatus = gmailParam;
       currentSection = 'posta';
@@ -1105,6 +1287,12 @@
     } else if (tiktokParam) {
       tiktokReturnStatus = tiktokParam;
       currentSection = 'social';
+      currentSocialPlatform = 'tiktok';
+      history.replaceState(null, '', location.pathname);
+    } else if (instagramParam) {
+      instagramReturnStatus = instagramParam;
+      currentSection = 'social';
+      currentSocialPlatform = 'instagram';
       history.replaceState(null, '', location.pathname);
     }
     renderDashboard();
