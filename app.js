@@ -74,6 +74,39 @@
     return thread.messages.map((m) => `${m.isMe ? 'Tu' : 'Loro'} (${m.date}):\n${m.body}`).join('\n\n---\n\n');
   }
 
+  /* ---------- SOCIAL (TikTok) ---------- */
+  const TIKTOK_CLIENT_KEY = 'sbaw9jo9nuke7ijzlt';
+  const TIKTOK_REDIRECT_URI = 'https://lyflfedxiosvayxjttzt.supabase.co/functions/v1/tiktok-oauth-callback';
+  const TIKTOK_PROXY_URL = 'https://lyflfedxiosvayxjttzt.supabase.co/functions/v1/tiktok-proxy';
+  let tiktokReturnStatus = null;
+
+  async function apiCall(url, action, extra) {
+    let { data: { session } } = await supa.auth.getSession();
+    if (!session) session = await restoreSession();
+    if (!session) throw new Error('Sessione scaduta, ricarica la pagina.');
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+    let res;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ action, ...(extra || {}) }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+    return res.json();
+  }
+
+  const tiktokCall = (action, extra) => apiCall(TIKTOK_PROXY_URL, action, extra);
+
+  function numFmt(n) {
+    return (n || 0).toLocaleString('it-IT');
+  }
+
   /* ---------- CODICE DI SICUREZZA (PIN a 6 cifre) ----------
      La vera sicurezza resta la sessione Supabase (email+password);
      questo PIN è solo un lucchetto rapido sopra, salvato SOLO su
@@ -301,6 +334,7 @@
     resi: 'Resi',
     traffico: 'Traffico',
     posta: 'Posta',
+    social: 'Social',
   };
   let chart = null;
   let trafficChart = null;
@@ -347,6 +381,7 @@
     else if (currentSection === 'traffico') renderTrafficSection();
     else if (currentSection === 'riepilogo') renderRiepilogoSection();
     else if (currentSection === 'posta') renderPostaSection();
+    else if (currentSection === 'social') renderSocialSection();
     else renderSalesSection();
   }
 
@@ -874,6 +909,84 @@
     });
   }
 
+  /* ----- Social ----- */
+  function renderSocialSection() {
+    app.innerHTML = `<p class="msg">Verifico il collegamento con TikTok…</p>`;
+    tiktokCall('status').then((res) => {
+      if (res.connected) renderSocialProfile();
+      else renderSocialConnect();
+    }).catch(() => {
+      app.innerHTML = `<p class="msg">Non riesco a controllare lo stato dei social. Riprova tra poco.</p>`;
+    });
+  }
+
+  function renderSocialConnect() {
+    const errorMsg = tiktokReturnStatus === 'error'
+      ? `<p class="msg" style="color:#e08a8a">Il collegamento con TikTok non è andato a buon fine. Riprova.</p>` : '';
+    tiktokReturnStatus = null;
+    app.innerHTML = `
+      <div class="login-card" style="margin:0">
+        <h1>Collega i social</h1>
+        ${errorMsg}
+        <p class="msg">Collega TikTok per vedere qui follower, video e le loro statistiche (visualizzazioni, like, commenti, condivisioni).</p>
+        <button class="pill pill--dark" id="connectTiktokBtn">Collega TikTok →</button>
+        <p class="msg" style="margin-top:1.2rem">Instagram/Facebook: in attesa (problema con l'SMS di verifica Meta, riproveremo più tardi).</p>
+      </div>`;
+    document.getElementById('connectTiktokBtn').addEventListener('click', async () => {
+      const { data: { session } } = await supa.auth.getSession();
+      const params = new URLSearchParams({
+        client_key: TIKTOK_CLIENT_KEY,
+        redirect_uri: TIKTOK_REDIRECT_URI,
+        response_type: 'code',
+        scope: 'user.info.stats,user.info.profile,video.list',
+        state: session.user.id,
+      });
+      location.href = `https://www.tiktok.com/v2/auth/authorize/?${params}`;
+    });
+  }
+
+  function renderSocialProfile() {
+    const connectedMsg = tiktokReturnStatus === 'connected' ? `<p class="msg" style="color:#8ac48a">TikTok collegato con successo.</p>` : '';
+    tiktokReturnStatus = null;
+    app.innerHTML = `
+      ${connectedMsg}
+      <div class="section-summary" id="socialSummary"><p class="msg">Carico i dati…</p></div>
+      <div class="section-detail">
+        <span class="section-detail__hint">TikTok</span>
+        <div id="socialVideos"></div>
+      </div>`;
+
+    Promise.all([tiktokCall('profile'), tiktokCall('videos')]).then(([profileRes, videosRes]) => {
+      if (profileRes.error || videosRes.error) { app.innerHTML = `<p class="msg">Non riesco a caricare i dati di TikTok. Riprova tra poco.</p>`; return; }
+      const p = profileRes.profile || {};
+      const videos = (videosRes.videos || []).slice().sort((a, b) => (b.create_time || 0) - (a.create_time || 0));
+
+      document.getElementById('socialSummary').innerHTML = `
+        <div class="section-summary__stat"><span class="section-summary__label">Follower</span><span class="section-summary__value">${numFmt(p.follower_count)}</span></div>
+        <div class="section-summary__stat"><span class="section-summary__label">Seguiti</span><span class="section-summary__value">${numFmt(p.following_count)}</span></div>
+        <div class="section-summary__stat"><span class="section-summary__label">Mi piace totali</span><span class="section-summary__value">${numFmt(p.likes_count)}</span></div>
+        <div class="section-summary__stat"><span class="section-summary__label">Video</span><span class="section-summary__value">${numFmt(p.video_count)}</span></div>`;
+
+      document.getElementById('socialVideos').innerHTML = videos.length
+        ? `<div class="video-list">${videos.map((v) => `
+            <a class="video-item" href="${v.share_url || '#'}" target="_blank" rel="noopener">
+              ${v.cover_image_url ? `<img class="video-item__cover" src="${v.cover_image_url}" alt="">` : ''}
+              <div class="video-item__body">
+                <span class="video-item__title">${escapeHtml(v.title || '(senza titolo)')}</span>
+                <div class="video-item__stats">
+                  <span>👁 ${numFmt(v.view_count)}</span>
+                  <span>❤ ${numFmt(v.like_count)}</span>
+                  <span>💬 ${numFmt(v.comment_count)}</span>
+                  <span>↗ ${numFmt(v.share_count)}</span>
+                </div>
+              </div>
+            </a>`).join('')}</div>`
+        : `<p class="msg">Nessun video trovato.</p>`;
+    }).catch(() => {
+      app.innerHTML = `<p class="msg">Non riesco a caricare i dati di TikTok. Riprova tra poco.</p>`;
+    });
+  }
+
   /* ---------- AUTH FLOW ---------- */
   function isRecoveryLink() {
     return location.hash.includes('type=recovery') || location.search.includes('type=recovery');
@@ -891,10 +1004,16 @@
     if (!pinHash) { renderPinSetup(); return; }
     if (sessionStorage.getItem(PIN_UNLOCK_KEY) !== '1') { renderPinLock(); return; }
 
-    const gmailParam = new URLSearchParams(location.search).get('gmail');
+    const params = new URLSearchParams(location.search);
+    const gmailParam = params.get('gmail');
+    const tiktokParam = params.get('tiktok');
     if (gmailParam) {
       gmailReturnStatus = gmailParam;
       currentSection = 'posta';
+      history.replaceState(null, '', location.pathname);
+    } else if (tiktokParam) {
+      tiktokReturnStatus = tiktokParam;
+      currentSection = 'social';
       history.replaceState(null, '', location.pathname);
     }
     renderDashboard();
