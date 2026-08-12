@@ -338,6 +338,10 @@
   };
   let chart = null;
   let trafficChart = null;
+  let socialGrowthChart = null;
+  let socialVideoChart = null;
+  let videoDetailChart = null;
+  let socialVideosCache = [];
   let currentSection = 'riepilogo';
   let currentPeriod = 'week';
   const menuBtn = document.getElementById('menuBtn');
@@ -952,14 +956,25 @@
       ${connectedMsg}
       <div class="section-summary" id="socialSummary"><p class="msg">Carico i dati…</p></div>
       <div class="section-detail">
-        <span class="section-detail__hint">TikTok</span>
+        <span class="section-detail__hint">TikTok — quadro generale</span>
+        <div class="admin__table-card" style="margin-bottom:1.4rem">
+          <h3>Andamento follower</h3>
+          <p class="msg" style="margin-bottom:.8rem">Si costruisce da oggi in poi — TikTok non fornisce lo storico passato.</p>
+          <canvas id="socialGrowthCanvas" height="80"></canvas>
+        </div>
+        <div class="admin__table-card" style="margin-bottom:1.4rem">
+          <h3>Visualizzazioni per video (in ordine di pubblicazione)</h3>
+          <canvas id="socialVideoChartCanvas" height="90"></canvas>
+        </div>
+        <span class="section-detail__hint">Video — clicca per il dettaglio</span>
         <div id="socialVideos"></div>
       </div>`;
 
-    Promise.all([tiktokCall('profile'), tiktokCall('videos')]).then(([profileRes, videosRes]) => {
+    Promise.all([tiktokCall('profile'), tiktokCall('videos'), tiktokCall('snapshots')]).then(([profileRes, videosRes, snapRes]) => {
       if (profileRes.error || videosRes.error) { app.innerHTML = `<p class="msg">Non riesco a caricare i dati di TikTok. Riprova tra poco.</p>`; return; }
       const p = profileRes.profile || {};
       const videos = (videosRes.videos || []).slice().sort((a, b) => (b.create_time || 0) - (a.create_time || 0));
+      socialVideosCache = videos;
 
       document.getElementById('socialSummary').innerHTML = `
         <div class="section-summary__stat"><span class="section-summary__label">Follower</span><span class="section-summary__value">${numFmt(p.follower_count)}</span></div>
@@ -967,9 +982,12 @@
         <div class="section-summary__stat"><span class="section-summary__label">Mi piace totali</span><span class="section-summary__value">${numFmt(p.likes_count)}</span></div>
         <div class="section-summary__stat"><span class="section-summary__label">Video</span><span class="section-summary__value">${numFmt(p.video_count)}</span></div>`;
 
+      renderSocialGrowthChart(snapRes.snapshots || []);
+      renderSocialVideoChart(videos);
+
       document.getElementById('socialVideos').innerHTML = videos.length
         ? `<div class="video-list">${videos.map((v) => `
-            <a class="video-item" href="${v.share_url || '#'}" target="_blank" rel="noopener">
+            <button class="video-item" data-video-id="${v.id}">
               ${v.cover_image_url ? `<img class="video-item__cover" src="${v.cover_image_url}" alt="">` : ''}
               <div class="video-item__body">
                 <span class="video-item__title">${escapeHtml(v.title || '(senza titolo)')}</span>
@@ -980,11 +998,84 @@
                   <span>↗ ${numFmt(v.share_count)}</span>
                 </div>
               </div>
-            </a>`).join('')}</div>`
+            </button>`).join('')}</div>`
         : `<p class="msg">Nessun video trovato.</p>`;
+      document.querySelectorAll('#socialVideos [data-video-id]').forEach((btn) => {
+        btn.addEventListener('click', () => openVideoDetail(btn.dataset.videoId));
+      });
     }).catch(() => {
       app.innerHTML = `<p class="msg">Non riesco a caricare i dati di TikTok. Riprova tra poco.</p>`;
     });
+  }
+
+  function renderSocialGrowthChart(snapshots) {
+    const canvas = document.getElementById('socialGrowthCanvas');
+    if (!canvas || !window.Chart) return;
+    const sorted = snapshots.slice().sort((a, b) => new Date(a.snapshot_date) - new Date(b.snapshot_date));
+    const labels = sorted.map((s) => new Date(s.snapshot_date).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' }));
+    const data = sorted.map((s) => s.follower_count);
+    if (socialGrowthChart) { socialGrowthChart.destroy(); socialGrowthChart = null; }
+    socialGrowthChart = new Chart(canvas.getContext('2d'), {
+      type: 'line',
+      data: { labels, datasets: [{ label: 'Follower', data, borderColor: '#FAFAF5', backgroundColor: 'rgba(250,250,245,.15)', fill: true, tension: .3 }] },
+      options: chartDarkOptions(),
+    });
+  }
+
+  function renderSocialVideoChart(videos) {
+    const canvas = document.getElementById('socialVideoChartCanvas');
+    if (!canvas || !window.Chart) return;
+    const sorted = videos.slice().sort((a, b) => (a.create_time || 0) - (b.create_time || 0));
+    const labels = sorted.map((v) => v.create_time ? new Date(v.create_time * 1000).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' }) : '?');
+    const data = sorted.map((v) => v.view_count || 0);
+    if (socialVideoChart) { socialVideoChart.destroy(); socialVideoChart = null; }
+    socialVideoChart = new Chart(canvas.getContext('2d'), {
+      type: 'bar',
+      data: { labels, datasets: [{ label: 'Visualizzazioni', data, backgroundColor: '#FAFAF5' }] },
+      options: chartDarkOptions(),
+    });
+  }
+
+  function openVideoDetail(id) {
+    const v = socialVideosCache.find((x) => x.id === id);
+    if (!v) return;
+    renderVideoDetailView(v);
+  }
+
+  function renderVideoDetailView(v) {
+    const totalEngagement = (v.like_count || 0) + (v.comment_count || 0) + (v.share_count || 0);
+    const engagementRate = v.view_count ? ((totalEngagement / v.view_count) * 100).toFixed(1) : '0.0';
+    app.innerHTML = `
+      <button class="pill pill--ghost thread-back-btn" id="backToSocialBtn">← Torna a Social</button>
+      <div class="admin__table-card" style="margin-bottom:1.4rem">
+        ${v.cover_image_url ? `<img src="${v.cover_image_url}" style="width:100%;max-width:260px;border-radius:12px;display:block;margin:0 auto 1rem">` : ''}
+        <h3>${escapeHtml(v.title || '(senza titolo)')}</h3>
+        <p class="msg">Pubblicato: ${v.create_time ? new Date(v.create_time * 1000).toLocaleDateString('it-IT') : '—'}</p>
+        ${v.share_url ? `<a class="pill pill--ghost" href="${v.share_url}" target="_blank" rel="noopener" style="display:inline-block;margin-top:.8rem;text-decoration:none">Apri su TikTok →</a>` : ''}
+      </div>
+      <div class="section-summary" style="margin-bottom:1.4rem">
+        <div class="section-summary__stat"><span class="section-summary__label">Visualizzazioni</span><span class="section-summary__value">${numFmt(v.view_count)}</span></div>
+        <div class="section-summary__stat"><span class="section-summary__label">Mi piace</span><span class="section-summary__value">${numFmt(v.like_count)}</span></div>
+        <div class="section-summary__stat"><span class="section-summary__label">Commenti</span><span class="section-summary__value">${numFmt(v.comment_count)}</span></div>
+        <div class="section-summary__stat"><span class="section-summary__label">Condivisioni</span><span class="section-summary__value">${numFmt(v.share_count)}</span></div>
+      </div>
+      <div class="admin__table-card">
+        <h3>Confronto interazioni</h3>
+        <p class="msg" style="margin-bottom:.8rem">Tasso di interazione: <strong>${engagementRate}%</strong> (mi piace + commenti + condivisioni rispetto alle visualizzazioni)</p>
+        <canvas id="videoDetailChartCanvas" height="90"></canvas>
+      </div>`;
+
+    document.getElementById('backToSocialBtn').addEventListener('click', () => renderSocialProfile());
+
+    const canvas = document.getElementById('videoDetailChartCanvas');
+    if (canvas && window.Chart) {
+      if (videoDetailChart) { videoDetailChart.destroy(); videoDetailChart = null; }
+      videoDetailChart = new Chart(canvas.getContext('2d'), {
+        type: 'bar',
+        data: { labels: ['Mi piace', 'Commenti', 'Condivisioni'], datasets: [{ data: [v.like_count || 0, v.comment_count || 0, v.share_count || 0], backgroundColor: '#FAFAF5' }] },
+        options: chartDarkOptions(),
+      });
+    }
   }
 
   /* ---------- AUTH FLOW ---------- */

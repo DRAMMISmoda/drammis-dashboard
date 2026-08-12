@@ -90,7 +90,31 @@ serve(async (req) => {
       );
       const data = await res.json();
       if (!res.ok) throw new Error(JSON.stringify(data));
-      return new Response(JSON.stringify({ profile: data?.data?.user || null }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const profile = data?.data?.user || null;
+
+      if (profile) {
+        const today = new Date().toISOString().slice(0, 10);
+        await supabaseAdmin.from("social_snapshots").upsert({
+          platform: "tiktok",
+          snapshot_date: today,
+          follower_count: profile.follower_count ?? null,
+          following_count: profile.following_count ?? null,
+          likes_count: profile.likes_count ?? null,
+          video_count: profile.video_count ?? null,
+        }, { onConflict: "platform,snapshot_date" });
+      }
+
+      return new Response(JSON.stringify({ profile }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    if (action === "snapshots") {
+      const { data } = await supabaseAdmin
+        .from("social_snapshots")
+        .select("snapshot_date, follower_count, following_count, likes_count, video_count")
+        .eq("platform", "tiktok")
+        .order("snapshot_date", { ascending: true })
+        .limit(90);
+      return new Response(JSON.stringify({ snapshots: data || [] }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     if (action === "videos") {
