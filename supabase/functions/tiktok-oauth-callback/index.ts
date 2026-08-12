@@ -21,12 +21,8 @@ serve(async (req) => {
     return Response.redirect(`${DASHBOARD_URL}/?tiktok=error`, 302);
   }
 
-  const { data: admin } = await supabase.from("admins").select("user_id").eq("user_id", state).maybeSingle();
-  if (!admin) {
-    return Response.redirect(`${DASHBOARD_URL}/?tiktok=error`, 302);
-  }
-
-  const tokenRes = await fetch("https://open.tiktokapis.com/v2/oauth/token/", {
+  // scambia il codice SUBITO, in parallelo al controllo admin: i codici TikTok durano pochissimo
+  const tokenPromise = fetch("https://open.tiktokapis.com/v2/oauth/token/", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded", "Cache-Control": "no-cache" },
     body: new URLSearchParams({
@@ -37,6 +33,16 @@ serve(async (req) => {
       redirect_uri: REDIRECT_URI,
     }),
   });
+
+  const [tokenRes, adminResult] = await Promise.all([
+    tokenPromise,
+    supabase.from("admins").select("user_id").eq("user_id", state).maybeSingle(),
+  ]);
+
+  if (!adminResult.data) {
+    return Response.redirect(`${DASHBOARD_URL}/?tiktok=error`, 302);
+  }
+
   const tokenData = await tokenRes.json();
   if (!tokenRes.ok || !tokenData.access_token) {
     console.error("tiktok token exchange failed", tokenData);
